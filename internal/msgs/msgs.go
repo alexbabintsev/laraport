@@ -99,6 +99,15 @@ type RedisReadyMsg struct {
 	CLIPrefix string
 }
 
+// PushRedisDumpMsg triggers an RDB snapshot download for the active container.
+type PushRedisDumpMsg struct{}
+
+// PushMongoDumpMsg triggers a mongodump archive download for the active container.
+type PushMongoDumpMsg struct {
+	User     string
+	Password string
+}
+
 // PushMongoCmdMsg navigates to the MongoDB commands screen.
 type PushMongoCmdMsg struct {
 	MongoBin string // "mongosh" or "mongo"

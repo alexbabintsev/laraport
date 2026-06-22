@@ -14,9 +14,14 @@ import (
 
 type mongoCommand struct {
 	label string
-	js    string // JavaScript expression passed to --eval
-	desc  string
+	// js is the JavaScript expression passed to --eval. The sentinel value
+	// mongoDownloadArchive instead triggers a mongodump archive download.
+	js   string
+	desc string
 }
+
+// mongoDownloadArchive is the js sentinel marking the "download dump" action.
+const mongoDownloadArchive = "@download-archive"
 
 type mongoGroup struct {
 	name     string
@@ -54,6 +59,12 @@ var mongoGroups = []mongoGroup{
 			{"Ping", "JSON.stringify(db.adminCommand({ping:1}))", "Check the server responds"},
 			{"Replica set status", "JSON.stringify(db.adminCommand({replSetGetStatus:1}))", "Replica set members and state"},
 			{"Profiling level", "JSON.stringify(db.getProfilingStatus())", "Current profiler level and slow-op threshold"},
+		},
+	},
+	{
+		name: "Backup",
+		commands: []mongoCommand{
+			{"Download dump", mongoDownloadArchive, "mongodump --archive --gzip → ~/Downloads/mongo_<ts>.archive.gz"},
 		},
 	},
 }
@@ -195,6 +206,12 @@ func (s *MongoCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return s, nil
 			}
 			mc := s.cmds[s.selected]
+			if mc.js == mongoDownloadArchive {
+				user, pass := s.user, s.password
+				return s, func() tea.Msg {
+					return msgs.PushMongoDumpMsg{User: user, Password: pass}
+				}
+			}
 			hostCmd := docker.MongoEvalCmd(s.containerID, s.mongoBin, s.user, s.password, "", mc.js)
 			title := "mongo: " + mc.label
 			return s, func() tea.Msg {

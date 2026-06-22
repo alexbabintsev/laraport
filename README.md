@@ -291,6 +291,7 @@ The screen offers curated, read-only commands grouped by purpose:
 - **Keys** — sample the first 20 keys and count keys via non-blocking `SCAN`, key distribution, `SLOWLOG GET 10`
 - **Configuration** — `CONFIG GET` for `maxmemory`, `maxmemory-policy`, `save`, `appendonly`
 - **Maintenance** — `PING`, `LASTSAVE`, `LATENCY DOCTOR`
+- **Backup** — **Download RDB snapshot** via `redis-cli --rdb`, saved to `~/Downloads/redis_<timestamp>.rdb`
 
 Key listing uses `redis-cli --scan` (non-blocking) rather than `KEYS *`, so it is safe to run against production instances.
 
@@ -306,6 +307,7 @@ Commands are curated JavaScript expressions grouped by purpose:
 - **Collections** — list collections, document counts, and data sizes per collection
 - **Indexes** — list indexes for every collection
 - **Maintenance** — `ping`, `replSetGetStatus`, profiling status
+- **Backup** — **Download dump** via `mongodump --archive --gzip`, saved to `~/Downloads/mongo_<timestamp>.archive.gz` (restore with `mongorestore --archive=… --gzip`)
 
 When no `MONGO_INITDB_ROOT_*` variables are present, commands run without authentication (suitable for local, unsecured instances).
 

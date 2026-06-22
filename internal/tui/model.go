@@ -359,6 +359,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.outputCh = ch
 		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
 
+	case msgs.PushRedisDumpMsg:
+		title := "Download RDB — " + a.container.Name
+		screen := screens.NewOutputScreen(title, a.width, a.height)
+		pass, _ := docker.DetectRedisPassword(a.runner, a.container.ID)
+		ch, err := docker.DumpRedis(a.runner, a.container.ID, pass)
+		if err != nil {
+			errCh := make(chan string, 1)
+			errCh <- fmt.Sprintf("ERROR: %v", err)
+			close(errCh)
+			ch = errCh
+		}
+		a.sessionID++
+		a.outputCh = ch
+		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+
+	case msgs.PushMongoDumpMsg:
+		title := "Download dump — " + a.container.Name
+		screen := screens.NewOutputScreen(title, a.width, a.height)
+		ch, err := docker.DumpMongo(a.runner, a.container.ID, msg.User, msg.Password)
+		if err != nil {
+			errCh := make(chan string, 1)
+			errCh <- fmt.Sprintf("ERROR: %v", err)
+			close(errCh)
+			ch = errCh
+		}
+		a.sessionID++
+		a.outputCh = ch
+		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+
 	case msgs.PushStorageDownloadMsg:
 		title := "Download Storage — " + a.container.Name
 		screen := screens.NewOutputScreen(title, a.width, a.height)

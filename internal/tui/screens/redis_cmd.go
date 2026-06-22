@@ -15,9 +15,14 @@ type redisCommand struct {
 	label string
 	// args is appended to the resolved redis-cli prefix. A %s placeholder, if
 	// present, is left as-is for the user to see (these commands take no input).
+	// The sentinel value redisDownloadRDB triggers an RDB snapshot download
+	// instead of running a redis-cli command into the output screen.
 	args string
 	desc string
 }
+
+// redisDownloadRDB is the args sentinel marking the "download RDB" action.
+const redisDownloadRDB = "@download-rdb"
 
 type redisGroup struct {
 	name     string
@@ -62,6 +67,12 @@ var redisGroups = []redisGroup{
 			{"PING", "PING", "Check the server responds"},
 			{"LASTSAVE", "LASTSAVE", "Unix time of the last successful RDB save"},
 			{"LATENCY DOCTOR", "LATENCY DOCTOR", "Human-readable latency diagnosis"},
+		},
+	},
+	{
+		name: "Backup",
+		commands: []redisCommand{
+			{"Download RDB snapshot", redisDownloadRDB, "redis-cli --rdb → ~/Downloads/redis_<ts>.rdb"},
 		},
 	},
 }
@@ -195,6 +206,9 @@ func (s *RedisCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return s, nil
 			}
 			rc := s.cmds[s.selected]
+			if rc.args == redisDownloadRDB {
+				return s, func() tea.Msg { return msgs.PushRedisDumpMsg{} }
+			}
 			// Pipe-based commands (--scan | head) need a shell; others run direct.
 			hostCmd := s.cliPrefix + " " + rc.args
 			title := "redis: " + rc.label

@@ -7,6 +7,10 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Redis & MongoDB backups** — the Redis and MongoDB inspection screens gained a **Backup** action
+  - Redis: **Download RDB snapshot** via `redis-cli --rdb` → `~/Downloads/redis_<timestamp>.rdb`
+  - MongoDB: **Download dump** via `mongodump --archive --gzip` → `~/Downloads/mongo_<timestamp>.archive.gz`
+  - (SQL engines already supported dumps; this brings the NoSQL engines to parity)
 - **Terminal** — new container-menu entry that opens an interactive shell inside the container
   - Suspends the TUI and attaches the real terminal (full PTY) via `tea.ExecProcess`, resuming on shell exit
   - Local servers run `docker exec -it`; SSH servers shell out to `ssh -t` with the server's host/port/key
