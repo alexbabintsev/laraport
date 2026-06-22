@@ -165,6 +165,7 @@ After selecting a container, the main menu offers:
 |---|---|---|
 | **Info** | Container details: image, status, network/IP, mounts, and labels (from `docker inspect`) | always |
 | **Stats** | Live CPU / memory / network / disk graphs plus a top-processes table (`c`/`m` to sort) | always |
+| **Terminal** | Open an interactive shell (`bash`, falling back to `sh`) inside the container | always |
 | **Commands** | Browse configured command groups | container has custom commands in config |
 | **Artisan Commands** | Full `php artisan` list with autocomplete | `artisan` file found |
 | **Composer Commands** | Browse and run composer scripts | `composer` or `php` found |
@@ -181,6 +182,8 @@ After selecting a container, the main menu offers:
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
 Menu items are detected automatically with a single `docker exec` probe when the container is opened. A spinner is shown during detection.
+
+**Terminal** suspends the TUI and attaches your real terminal to an interactive shell in the container, resuming laradok when you exit the shell (`exit` or `Ctrl+D`). For local servers it runs `docker exec -it`; for SSH servers it shells out to your system `ssh -t` using the server's host/port/key, so the same key/agent that works for `ssh` must be available.
 
 ---
 

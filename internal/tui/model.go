@@ -149,6 +149,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screen := screens.NewStatsScreen(a.container.Name, a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.sampleStatsCmd(docker.SortByCPU))
 
+	case msgs.OpenTerminalMsg:
+		target := docker.ShellTarget{ContainerID: a.container.ID}
+		if a.activeServer.Type == config.ServerTypeSSH {
+			target.Host = a.activeServer.Host
+			target.Port = a.activeServer.Port
+			target.User = a.activeServer.User
+			target.KeyPath = a.activeServer.Key // already ~-expanded at config load
+		}
+		cmd := docker.InteractiveShellCmd(target)
+		// Suspend the TUI, attach the real terminal to the shell, resume on exit.
+		return a, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return msgs.TerminalFinishedMsg{Err: err}
+		})
+
+	case msgs.TerminalFinishedMsg:
+		// The TUI has resumed; nothing to do beyond a redraw. Errors are
+		// transient (e.g. shell missing) and the user already saw any output.
+		return a, nil
+
 	case msgs.StatsTickMsg:
 		// Stop polling once the user has navigated away from the stats screen.
 		if _, ok := a.top().(*screens.StatsScreen); !ok {

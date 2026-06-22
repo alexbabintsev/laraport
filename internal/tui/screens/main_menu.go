@@ -58,6 +58,7 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 	// Always shown
 	items = append(items, menuItem{"Info", "Image, status, network, mounts, and labels"})
 	items = append(items, menuItem{"Stats", "Live CPU, memory, network, disk graphs and top processes"})
+	items = append(items, menuItem{"Terminal", "Open an interactive shell inside the container"})
 	if len(ccfg.Commands) > 0 {
 		items = append(items, menuItem{"Commands", "Browse command groups from config"})
 	}
@@ -170,6 +171,8 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return s, func() tea.Msg { return msgs.PushInfoMsg{} }
 				case "Stats":
 					return s, func() tea.Msg { return msgs.PushStatsMsg{} }
+				case "Terminal":
+					return s, func() tea.Msg { return msgs.OpenTerminalMsg{} }
 				case "Commands":
 					groups := s.containerGroups
 					return s, func() tea.Msg { return msgs.PushCommandsMsg{ContainerGroups: groups} }

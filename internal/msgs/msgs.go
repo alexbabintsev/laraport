@@ -43,6 +43,16 @@ type PushInfoMsg struct{}
 // PushStatsMsg navigates to the live stats (graphs) screen.
 type PushStatsMsg struct{}
 
+// OpenTerminalMsg requests an interactive shell session inside the active
+// container. The App suspends the TUI and hands the terminal to the shell.
+type OpenTerminalMsg struct{}
+
+// TerminalFinishedMsg is sent after the interactive shell exits and the TUI
+// has resumed. Err is non-nil if the shell could not be started.
+type TerminalFinishedMsg struct {
+	Err error
+}
+
 // StatsTickMsg signals the stats screen wants the next docker stats sample.
 // The App handles it by sampling and replying with StatsSampleMsg. SortProcs
 // selects the process-table ordering for that sample.
