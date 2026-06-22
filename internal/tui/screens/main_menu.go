@@ -30,6 +30,7 @@ type MainMenuScreen struct {
 	list            list.Model
 	sp              spinner.Model
 	loading         bool
+	dbEngine        docker.DBEngine
 	width           int
 	height          int
 }
@@ -86,8 +87,8 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 		menuItem{"Server Logs", "Tail nginx, php, supervisor and other service logs"},
 	)
 
-	// PostgreSQL
-	if caps.HasPostgres {
+	// Database (PostgreSQL or MySQL)
+	if caps.HasDatabase() {
 		items = append(items, menuItem{"Database", "Browse databases, run SQL queries, download dumps"})
 	}
 
@@ -128,6 +129,7 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgs.ContainerCapsLoadedMsg:
 		s.loading = false
+		s.dbEngine = msg.Caps.DBEngine()
 		s.list = buildMenuList(s.container, s.containerCfg, msg.Caps, s.width, s.height)
 		return s, nil
 
@@ -170,7 +172,8 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "Server Logs":
 					return s, func() tea.Msg { return msgs.PushServerLogPickerMsg{} }
 				case "Database":
-					return s, func() tea.Msg { return msgs.PushDBScreenMsg{} }
+					engine := s.dbEngine
+					return s, func() tea.Msg { return msgs.PushDBScreenMsg{Engine: engine} }
 				case "Download Storage":
 					return s, func() tea.Msg { return msgs.PushStorageDownloadMsg{} }
 				case "File Browser":

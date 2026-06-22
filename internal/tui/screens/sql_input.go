@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alexbabintsev/laradok/internal/docker"
 	"github.com/alexbabintsev/laradok/internal/msgs"
 	"github.com/alexbabintsev/laradok/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -19,6 +20,7 @@ type SQLInputScreen struct {
 	dbName     string
 	user       string
 	password   string
+	engine     docker.DBEngine
 	historyKey string
 	history    []string // all queries, index 0 = oldest
 	historyPos int      // -1 = new input; 0..len-1 = navigating history (0=oldest)
@@ -27,7 +29,7 @@ type SQLInputScreen struct {
 	height     int
 }
 
-func NewSQLInputScreen(dbName, user, password, historyKey string, history []string, width, height int) *SQLInputScreen {
+func NewSQLInputScreen(dbName, user, password string, engine docker.DBEngine, historyKey string, history []string, width, height int) *SQLInputScreen {
 	ti := textinput.New()
 	ti.Placeholder = "SELECT * FROM users LIMIT 10;"
 	ti.Focus()
@@ -44,6 +46,7 @@ func NewSQLInputScreen(dbName, user, password, historyKey string, history []stri
 		dbName:     dbName,
 		user:       user,
 		password:   password,
+		engine:     engine,
 		historyKey: historyKey,
 		history:    h,
 		historyPos: -1,
@@ -137,6 +140,7 @@ func (s *SQLInputScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					DBName:     dbName,
 					User:       user,
 					Password:   pass,
+					Engine:     s.engine,
 					SQL:        sql,
 					HistoryKey: historyKey,
 					History:    history,

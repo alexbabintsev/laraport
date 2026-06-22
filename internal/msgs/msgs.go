@@ -148,9 +148,11 @@ type ContainerCapsLoadedMsg struct {
 }
 
 // PushDBScreenMsg navigates to the database list screen for the active container.
-type PushDBScreenMsg struct{}
+type PushDBScreenMsg struct {
+	Engine docker.DBEngine
+}
 
-// DBCredsLoadedMsg carries detected PostgreSQL credentials.
+// DBCredsLoadedMsg carries detected database credentials.
 type DBCredsLoadedMsg struct {
 	User     string
 	Password string
@@ -168,6 +170,7 @@ type PushDBActionsMsg struct {
 	DBName     string
 	User       string
 	Password   string
+	Engine     docker.DBEngine
 	HistoryKey string // "serverName/containerName/dbName"
 }
 
@@ -176,6 +179,7 @@ type PushSQLInputMsg struct {
 	DBName     string
 	User       string
 	Password   string
+	Engine     docker.DBEngine
 	HistoryKey string   // "serverName/containerName/dbName"
 	History    []string // previously executed queries, most recent last
 }
@@ -186,16 +190,18 @@ type PushSQLExecMsg struct {
 	DBName     string
 	User       string
 	Password   string
+	Engine     docker.DBEngine
 	SQL        string
 	HistoryKey string   // passed through so App can persist on execution
 	History    []string // updated history to pass back on return
 }
 
-// PushDBDownloadMsg triggers a pg_dump download for the given database.
+// PushDBDownloadMsg triggers a database dump download for the given database.
 type PushDBDownloadMsg struct {
 	DBName       string
 	User         string
 	Password     string
+	Engine       docker.DBEngine
 	CustomFormat bool // true = pg_dump -Fc (.dump), false = plain SQL gzipped (.sql.gz)
 	Inserts      bool // true = add --inserts --column-inserts (slower, more portable)
 }

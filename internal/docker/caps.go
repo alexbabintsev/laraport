@@ -11,7 +11,22 @@ type ContainerCaps struct {
 	HasComposer bool // composer binary or composer.phar present
 	HasNpm      bool // npm binary present
 	HasPostgres bool // psql binary present
+	HasMySQL    bool // mysql binary present
 	HasPHP      bool // php binary present
+}
+
+// HasDatabase reports whether any supported database engine is present.
+func (c ContainerCaps) HasDatabase() bool {
+	return c.HasPostgres || c.HasMySQL
+}
+
+// DBEngine returns the database engine to use for this container.
+// PostgreSQL takes precedence when both clients happen to be installed.
+func (c ContainerCaps) DBEngine() DBEngine {
+	if c.HasPostgres {
+		return EnginePostgres
+	}
+	return EngineMySQL
 }
 
 // DetectCapabilities probes the container with a single sh -c command to check
@@ -28,6 +43,7 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`(command -v composer >/dev/null 2>&1 || [ -f %s/composer.phar ]) && echo HAS_COMPOSER; `+
 			`command -v npm >/dev/null 2>&1 && echo HAS_NPM; `+
 			`command -v psql >/dev/null 2>&1 && echo HAS_POSTGRES; `+
+			`command -v mysql >/dev/null 2>&1 && echo HAS_MYSQL; `+
 			`command -v php >/dev/null 2>&1 && echo HAS_PHP; `+
 			`true`,
 		root, root,
@@ -53,6 +69,8 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			caps.HasNpm = true
 		case "HAS_POSTGRES":
 			caps.HasPostgres = true
+		case "HAS_MYSQL":
+			caps.HasMySQL = true
 		case "HAS_PHP":
 			caps.HasPHP = true
 		}

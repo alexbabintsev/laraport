@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alexbabintsev/laradok/internal/docker"
 	"github.com/alexbabintsev/laradok/internal/msgs"
 	"github.com/alexbabintsev/laradok/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -11,11 +12,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// DBListScreen shows discovered databases for the active PostgreSQL container.
+// DBListScreen shows discovered databases for the active database container.
 type DBListScreen struct {
 	databases  []string
 	user       string
 	password   string
+	engine     docker.DBEngine
 	historyKey string // prefix "serverName/containerName" — dbName appended on select
 	selected   int
 	scrollOff  int
@@ -26,12 +28,13 @@ type DBListScreen struct {
 	height     int
 }
 
-func NewDBListScreen(historyKeyPrefix string, width, height int) *DBListScreen {
+func NewDBListScreen(historyKeyPrefix string, engine docker.DBEngine, width, height int) *DBListScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = styles.SpinnerStyle
 	return &DBListScreen{
 		historyKey: historyKeyPrefix,
+		engine:     engine,
 		loading:    true,
 		sp:         sp,
 		width:      width,
@@ -131,7 +134,7 @@ func (s *DBListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				pass := s.password
 				hk := strings.TrimRight(s.historyKey, "/") + "/" + db
 				return s, func() tea.Msg {
-					return msgs.PushDBActionsMsg{DBName: db, User: user, Password: pass, HistoryKey: hk}
+					return msgs.PushDBActionsMsg{DBName: db, User: user, Password: pass, Engine: s.engine, HistoryKey: hk}
 				}
 			}
 		}
@@ -144,7 +147,7 @@ func (s *DBListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (s *DBListScreen) View() string {
-	title := styles.TitleBar.Render("PostgreSQL Databases")
+	title := styles.TitleBar.Render(s.engine.Label() + " Databases")
 
 	var body string
 	if s.loading {

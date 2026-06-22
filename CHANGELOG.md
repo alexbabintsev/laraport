@@ -7,6 +7,12 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **MySQL support** — the **Database** menu now works with MySQL containers in addition to PostgreSQL
+  - Engine auto-detected via the container probe (`mysql` client → MySQL; `psql` still wins if both are present)
+  - Credentials read from `MYSQL_ROOT_PASSWORD` (preferred, as `root`) or `MYSQL_USER` / `MYSQL_PASSWORD`
+  - Lists non-system databases (excludes `information_schema`, `performance_schema`, `mysql`, `sys`)
+  - Per-database action menu mirroring the PostgreSQL one: Info & Stats, Schema, Indexes, Maintenance, Run SQL query, and SQL dump download
+  - **Download SQL dump** via `mysqldump --single-transaction --no-tablespaces | gzip` → `~/Downloads/<db>_<timestamp>.sql.gz`
 - **File Browser** — walk the container filesystem from the main menu (any container, rooted at `/`)
   - Lists directories first then files, each with its size (`du -sb` for dirs, byte size for files)
   - Navigate with `↑↓`, `enter`/`→` to open a directory or view a file in the log viewer, `←`/`backspace` to go up, `esc` to leave

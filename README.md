@@ -18,7 +18,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **Interactive shell** — run any command with live stdin/stdout streaming
 - **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle
 - **Docker commands** — inspect, restart, stats, top, diff, network info, and more
-- **PostgreSQL management** — connect to any PostgreSQL container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
+- **Database management** — connect to any PostgreSQL or MySQL container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
 - **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laradok/sql_history.json`)
 
 ---
@@ -169,7 +169,7 @@ After selecting a container, the main menu offers:
 | **Laravel Logs** | Browse and tail `storage/logs/*.log` files | `artisan` file found |
 | **Docker Logs** | Stream container stdout/stderr | always |
 | **Server Logs** | Tail nginx, php-fpm, supervisor logs | always |
-| **Database** | PostgreSQL management (see below) | `psql` found |
+| **Database** | PostgreSQL or MySQL management (see below) | `psql` or `mysql` found |
 | **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` file found |
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
@@ -177,13 +177,15 @@ Menu items are detected automatically with a single `docker exec` probe when the
 
 ---
 
-## PostgreSQL Management
+## Database Management
 
-Select a PostgreSQL container from the container list, then choose **Database** from the main menu.
+Select a container running PostgreSQL or MySQL from the container list, then choose **Database** from the main menu. The engine is detected automatically (`psql` → PostgreSQL, `mysql` → MySQL; PostgreSQL wins if both clients are present).
 
-laradok auto-detects credentials from the container's environment variables (`POSTGRES_USER`, `POSTGRES_PASSWORD`). If `POSTGRES_USER` is not set, it falls back to `postgres`.
+For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For **MySQL**, it prefers `root` with `MYSQL_ROOT_PASSWORD`, otherwise `MYSQL_USER` / `MYSQL_PASSWORD`.
 
-### Database actions
+System databases are hidden from the list (PostgreSQL: `postgres`, `template0`, `template1`; MySQL: `information_schema`, `performance_schema`, `mysql`, `sys`).
+
+### PostgreSQL actions
 
 #### Info & Stats
 - **DB size** — total size on disk
@@ -219,6 +221,17 @@ laradok auto-detects credentials from the container's environment variables (`PO
 - **Download SQL dump** — `pg_dump --no-owner --no-acl | gzip`, saves to `~/Downloads/<db>_<timestamp>.sql.gz`
 - **Download SQL dump (inserts)** — same but with `--inserts --column-inserts` (slower, more portable INSERT-based dump)
 - **Download custom dump** — `pg_dump --no-owner --no-acl -Fc`, saves to `~/Downloads/<db>_<timestamp>.dump` (binary format, use with `pg_restore` for selective table restore)
+
+### MySQL actions
+
+MySQL exposes an equivalent set of actions built on `information_schema` / `performance_schema`:
+
+- **Info & Stats** — DB size, version/uptime, table sizes (top 20), table row counts, active connections, long running queries
+- **Schema** — list tables, views, columns, foreign keys, routines (procedures/functions)
+- **Indexes** — list indexes per table, find tables without a primary key
+- **Maintenance** — table status (engine, free space, auto_increment), InnoDB lock waits, generate `ANALYZE TABLE` statements
+- **Query** — **Run SQL query** with persistent per-database history
+- **Backup** — **Download SQL dump** via `mysqldump --single-transaction --no-tablespaces | gzip`, saves to `~/Downloads/<db>_<timestamp>.sql.gz`
 
 ### SQL query history
 

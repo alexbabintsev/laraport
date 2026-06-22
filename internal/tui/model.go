@@ -26,6 +26,7 @@ type App struct {
 	sessionID      uint64                   // incremented on each new tail/output session
 	logFilePath    string                   // file path for lazy log chunk loading (empty for docker logs)
 	logTopLine     int                      // 1-based line number of earliest loaded line (0 = unknown/docker)
+	dbEngine       docker.DBEngine          // active database engine for the current DB session
 }
 
 // NewApp creates the root App model starting on the server list screen.
@@ -210,7 +211,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.PushDBScreenMsg:
 		prefix := a.activeServer.Name + "/" + a.container.Name
-		screen := screens.NewDBListScreen(prefix, a.width, a.height)
+		a.dbEngine = msg.Engine
+		screen := screens.NewDBListScreen(prefix, msg.Engine, a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.loadDBCredsCmd())
 
 	case msgs.DBCredsLoadedMsg:
@@ -228,22 +230,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case msgs.PushDBActionsMsg:
-		screen := screens.NewDBActionsScreen(msg.DBName, msg.User, msg.Password, a.container.ID, msg.HistoryKey, a.width, a.height)
+		screen := screens.NewDBActionsScreen(msg.DBName, msg.User, msg.Password, a.container.ID, msg.Engine, msg.HistoryKey, a.width, a.height)
 		return a, a.push(screen)
 
 	case msgs.PushSQLInputMsg:
 		history := config.LoadSQLHistory(msg.HistoryKey)
-		screen := screens.NewSQLInputScreen(msg.DBName, msg.User, msg.Password, msg.HistoryKey, history, a.width, a.height)
+		screen := screens.NewSQLInputScreen(msg.DBName, msg.User, msg.Password, msg.Engine, msg.HistoryKey, history, a.width, a.height)
 		return a, a.push(screen)
 
 	case msgs.PushSQLExecMsg:
 		config.SaveSQLHistory(msg.HistoryKey, msg.History) //nolint:errcheck
-		hostCmd := fmt.Sprintf(
-			`docker exec -e PGPASSWORD=%s -e PGUSER=%s %s psql -d %s -c %s`,
-			docker.ShellQuote(msg.Password), docker.ShellQuote(msg.User),
-			a.container.ID,
-			docker.ShellQuote(msg.DBName), docker.ShellQuote(msg.SQL),
-		)
+		hostCmd := docker.DBExecHostCmd(msg.Engine, a.container.ID, msg.User, msg.Password, msg.DBName, msg.SQL)
 		screen := screens.NewOutputScreen(msg.Title, a.width, a.height)
 		ch, err := a.startCommand(msgs.PushOutputMsg{Title: msg.Title, HostCmd: hostCmd})
 		if err != nil {
@@ -261,7 +258,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screen := screens.NewOutputScreen(title, a.width, a.height)
 		var ch <-chan string
 		var err error
-		if msg.CustomFormat {
+		if msg.Engine == docker.EngineMySQL {
+			ch, err = docker.DumpMySQLDatabase(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
+		} else if msg.CustomFormat {
 			ch, err = docker.DumpDatabaseCustom(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
 		} else if msg.Inserts {
 			ch, err = docker.DumpDatabaseInserts(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
@@ -552,18 +551,32 @@ func (a *App) loadCapsCmd() tea.Cmd {
 	}
 }
 
-// loadDBCredsCmd detects PostgreSQL credentials from the active container env.
+// loadDBCredsCmd detects database credentials from the active container env.
 func (a *App) loadDBCredsCmd() tea.Cmd {
+	engine := a.dbEngine
 	return func() tea.Msg {
-		user, pass, err := docker.DetectPostgresCredentials(a.runner, a.container.ID)
+		var user, pass string
+		var err error
+		if engine == docker.EngineMySQL {
+			user, pass, err = docker.DetectMySQLCredentials(a.runner, a.container.ID)
+		} else {
+			user, pass, err = docker.DetectPostgresCredentials(a.runner, a.container.ID)
+		}
 		return msgs.DBCredsLoadedMsg{User: user, Password: pass, Err: err}
 	}
 }
 
-// loadDBListCmd lists databases in the active PostgreSQL container.
+// loadDBListCmd lists databases in the active database container.
 func (a *App) loadDBListCmd(user, password string) tea.Cmd {
+	engine := a.dbEngine
 	return func() tea.Msg {
-		dbs, err := docker.ListDatabases(a.runner, a.container.ID, user, password)
+		var dbs []string
+		var err error
+		if engine == docker.EngineMySQL {
+			dbs, err = docker.ListMySQLDatabases(a.runner, a.container.ID, user, password)
+		} else {
+			dbs, err = docker.ListDatabases(a.runner, a.container.ID, user, password)
+		}
 		return msgs.DBListLoadedMsg{Databases: dbs, Err: err}
 	}
 }
