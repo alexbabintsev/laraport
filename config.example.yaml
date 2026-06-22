@@ -1,0 +1,195 @@
+# laradok configuration
+# Place this file at ~/.config/laradok/config.yaml
+# or pass its path as the first argument: laradok /path/to/config.yaml
+# or set LARADOK_CONFIG=/path/to/config.yaml
+
+commands:
+  - name: "Cache"
+    commands:
+      - label: "cache:clear"
+        cmd: "php artisan cache:clear"
+        desc: "Flush the application cache"
+
+  - name: "Config"
+    commands:
+      - label: "config:clear"
+        cmd: "php artisan config:clear"
+        desc: "Remove the configuration cache file"
+      - label: "config:cache"
+        cmd: "php artisan config:cache"
+        desc: "Create a cache file for faster configuration loading"
+
+  - name: "Database"
+    commands:
+      - label: "migrate:status"
+        cmd: "php artisan migrate:status"
+        desc: "Show the status of each migration"
+      - label: "migrate"
+        cmd: "php artisan migrate --force"
+        desc: "Run the database migrations"
+      - label: "migrate:rollback"
+        cmd: "php artisan migrate:rollback"
+        desc: "Rollback the last database migration"
+
+  - name: "General"
+    commands:
+      - label: "down"
+        cmd: "php artisan down"
+        desc: "Put the application into maintenance mode"
+      - label: "up"
+        cmd: "php artisan up"
+        desc: "Bring the application out of maintenance mode"
+      - label: "version"
+        cmd: "php artisan version"
+        desc: "Show the current framework version"
+      - label: "env"
+        cmd: "php artisan env"
+        desc: "Display the current framework environment"
+
+  - name: "Queue"
+    commands:
+      - label: "queue:failed"
+        cmd: "php artisan queue:failed"
+        desc: "List all of the failed queue jobs"
+      - label: "queue:flush"
+        cmd: "php artisan queue:flush"
+        desc: "Flush all of the failed queue jobs"
+      - label: "queue:restart"
+        cmd: "php artisan queue:restart"
+        desc: "Restart queue worker daemons after their current job"
+      - label: "queue:work"
+        cmd: "php artisan queue:work"
+        desc: "Start processing jobs on the queue"
+
+  - name: "Route"
+    commands:
+      - label: "route:list"
+        cmd: "php artisan route:list"
+        desc: "List all registered routes"
+      - label: "route:cache"
+        cmd: "php artisan route:cache"
+        desc: "Create a route cache file for faster route registration"
+      - label: "route:clear"
+        cmd: "php artisan route:clear"
+        desc: "Remove the route cache file"
+
+  - name: "Store"
+    commands:
+      - label: "storage:link"
+        cmd: "php artisan storage:link"
+        desc: "Create the symbolic links configured for the application"
+      - label: "optimize"
+        cmd: "php artisan optimize"
+        desc: "Cache the framework bootstrap files"
+
+  - name: "Scheduler"
+    commands:
+      - label: "schedule:run"
+        cmd: "php artisan schedule:run"
+        desc: "Run the scheduled commands"
+      - label: "schedule:list"
+        cmd: "php artisan schedule:list"
+        desc: "List the scheduled commands"
+
+  - name: "View"
+    commands:
+      - label: "view:clear"
+        cmd: "php artisan view:clear"
+        desc: "Clear all compiled view files"
+
+  - name: "Sitemap"
+    commands:
+      - label: "sitemap:generate"
+        cmd: "php artisan sitemap:generate"
+        desc: "Generate the sitemap"
+
+  - name: "Composer"
+    commands:
+      - label: "install"
+        cmd: "composer install"
+        desc: "Install dependencies from composer.lock"
+      - label: "update"
+        cmd: "composer update"
+        desc: "Update dependencies to latest allowed versions"
+      - label: "dump-autoload"
+        cmd: "composer dump-autoload"
+        desc: "Regenerate the autoloader"
+      - label: "require"
+        cmd: "composer require"
+        desc: "Add a new package to composer.json"
+      - label: "remove"
+        cmd: "composer remove"
+        desc: "Remove a package from composer.json"
+      - label: "show"
+        cmd: "composer show"
+        desc: "List installed packages"
+      - label: "outdated"
+        cmd: "composer outdated"
+        desc: "Show packages with available updates"
+
+  - name: "Npm"
+    commands:
+      - label: "install"
+        cmd: "npm install"
+        desc: "Install dependencies from package.json"
+      - label: "run dev"
+        cmd: "npm run dev"
+        desc: "Start the development build watcher"
+      - label: "run build"
+        cmd: "npm run build"
+        desc: "Build assets for production"
+      - label: "run prod"
+        cmd: "npm run prod"
+        desc: "Build and optimize assets for production"
+      - label: "outdated"
+        cmd: "npm outdated"
+        desc: "Show packages with available updates"
+      - label: "audit"
+        cmd: "npm audit"
+        desc: "Run a security audit on dependencies"
+      - label: "ci"
+        cmd: "npm ci"
+        desc: "Clean install from package-lock.json"
+
+servers:
+  - name: "Production"
+    host: "your-server.example.com"
+    port: 22
+    user: "deploy"
+    key: "~/.ssh/id_ed25519"
+    type: ssh
+    containers:
+      - name: "myapp-*"               # glob patterns supported
+        display_name: "My App"
+        favorite: true                # ★ pin to top of the list
+        custom_logs:
+          - /var/log/nginx/access.log
+          - /var/log/nginx/error.log
+        commands:
+          - name: "Horizon"
+            commands:
+              - label: "horizon:status"
+                cmd: "php artisan horizon:status"
+                desc: "Get the current status of Horizon"
+              - label: "horizon:terminate"
+                cmd: "php artisan horizon:terminate"
+                desc: "Terminate the master Horizon process"
+
+  - name: "Local Dev"
+    type: local
+
+# Per-container options (under each server):
+#   containers:
+#     - name: "my-container"        # docker container name (required, glob patterns supported)
+#       display_name: "My App"      # custom display name in the list
+#       favorite: true              # ★ yellow star, always at top
+#       hidden: true                # hide from container list entirely
+#       root_path: "/var/www/app"   # custom path to Laravel root (default: /var/www/html)
+#       custom_logs:                # extra log paths to show in Server Logs
+#         - /var/log/custom/app.log
+#       commands:                   # per-container command groups (appear before global commands)
+#         - name: "My Group"
+#           commands:
+#             - label: "my command"
+#               cmd: "php artisan my:command --option"
+#               desc: "Description shown in the list"

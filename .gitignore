@@ -1,0 +1,29 @@
+# Binary
+laradok
+/laradok
+
+# Real config with server hosts/keys - use config.example.yaml as the template
+config.yaml
+~/.config/
+
+# Claude Code local settings
+.claude/
+
+# Go
+vendor/
+*.test
+*.out
+coverage.txt
+
+# GoReleaser build output
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

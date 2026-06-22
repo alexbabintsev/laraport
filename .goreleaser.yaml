@@ -1,0 +1,85 @@
+# GoReleaser config for laradok.
+# Docs: https://goreleaser.com
+#
+# Release flow:
+#   1. git tag v0.1.0 && git push origin v0.1.0
+#   2. GitHub Actions runs `goreleaser release`, which:
+#      - cross-compiles macOS/Linux (arm64 + amd64) binaries
+#      - publishes a GitHub Release with .tar.gz archives + checksums
+#      - commits an updated Formula/laradok.rb into alexbabintsev/homebrew-tap
+#
+# Then users install with:
+#   brew install alexbabintsev/tap/laradok
+
+version: 2
+
+project_name: laradok
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: laradok
+    main: .
+    binary: laradok
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # Inject the version (from the git tag) into the `version` var in main.go.
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: laradok
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - CHANGELOG.md
+      - LICENSE
+      - config.example.yaml
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+# Homebrew tap formula. Requires a GITHUB_TOKEN/HOMEBREW_TAP_TOKEN with write
+# access to the alexbabintsev/homebrew-tap repository (set in CI secrets).
+#
+# NOTE: GoReleaser deprecated `brews:` in favour of `homebrew_casks:`. We keep
+# the classic formula here on purpose: a cask would install laradok as an
+# unsigned macOS app bundle and force a `xattr -dr com.apple.quarantine` hook,
+# whereas a plain `bin.install` formula just drops the binary on PATH with no
+# code-signing/notarisation needed. Revisit casks once the binary is signed.
+brews:
+  - name: laradok
+    repository:
+      owner: alexbabintsev
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://laradok.babintsev.com"
+    description: "A terminal UI for managing Laravel apps inside Docker, locally or over SSH"
+    license: "MIT"
+    # The bottle is just a single binary, so the test simply checks --version.
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/laradok --version")
+    install: |
+      bin.install "laradok"

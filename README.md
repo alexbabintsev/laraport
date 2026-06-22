@@ -1,0 +1,281 @@
+# laradok
+
+A terminal UI for managing Laravel applications running inside Docker containers — locally or on remote servers over SSH.
+
+![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)
+![Platform](https://img.shields.io/badge/platform-macOS%20%2F%20Linux-lightgrey)
+
+---
+
+## Features
+
+- **Multi-server support** — connect to any number of SSH servers or use your local Docker socket
+- **Container browser** — lists all running Docker containers with favorites, custom display names, and filtering
+- **Artisan commands** — full autocomplete list of all `php artisan` commands with descriptions
+- **Composer commands** — browse and run composer scripts; auto-downloads `composer.phar` if not installed
+- **npm scripts** — browse and run scripts from `package.json`
+- **Custom commands** — define reusable command groups per container or globally in config
+- **Interactive shell** — run any command with live stdin/stdout streaming
+- **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle
+- **Docker commands** — inspect, restart, stats, top, diff, network info, and more
+- **PostgreSQL management** — connect to any PostgreSQL container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
+- **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laradok/sql_history.json`)
+
+---
+
+## Installation
+
+### Homebrew (macOS / Linux)
+
+```bash
+brew install alexbabintsev/tap/laradok
+```
+
+Upgrade later with `brew upgrade laradok`.
+
+### From source
+
+```bash
+git clone https://github.com/alexbabintsev/laradok
+cd laradok
+go build -o laradok .
+mv laradok /usr/local/bin/
+```
+
+### Requirements
+
+- Docker installed and accessible on target hosts
+- SSH key-based auth for remote servers (or `ssh-agent`)
+- Go 1.22+ (only for building from source)
+
+---
+
+## Configuration
+
+Default config path: `~/.config/laradok/config.yaml`
+
+Override with:
+```bash
+laradok /path/to/config.yaml
+# or
+LARADOK_CONFIG=/path/to/config.yaml laradok
+```
+
+### Minimal config (local Docker)
+
+```yaml
+# No config needed — laradok auto-adds a local server if none are defined.
+```
+
+### Full config example
+
+```yaml
+commands:
+  - name: "Cache"
+    commands:
+      - label: "cache:clear"
+        cmd: "php artisan cache:clear"
+        desc: "Flush the application cache"
+
+  - name: "Database"
+    commands:
+      - label: "migrate"
+        cmd: "php artisan migrate --force"
+        desc: "Run database migrations"
+      - label: "migrate:rollback"
+        cmd: "php artisan migrate:rollback"
+        desc: "Rollback the last migration"
+
+servers:
+  - name: "Production"
+    host: "your-server.com"
+    port: 22
+    user: "root"
+    key: "~/.ssh/id_ed25519"
+    type: ssh
+    containers:
+      - name: "myapp-*"               # glob pattern supported
+        display_name: "My App"
+        favorite: true
+        root_path: "/var/www/html"    # default, can be omitted
+        custom_logs:
+          - /var/log/nginx/access.log
+          - /var/log/nginx/error.log
+        commands:
+          - name: "Horizon"
+            commands:
+              - label: "horizon:status"
+                cmd: "php artisan horizon:status"
+                desc: "Get the current status of Horizon"
+
+  - name: "Local Dev"
+    type: local
+```
+
+### Container config options
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Docker container name or glob pattern (e.g. `app-*`) |
+| `display_name` | string | Custom label shown in the container list |
+| `favorite` | bool | Pin to top of list with a star indicator |
+| `hidden` | bool | Hide from container list entirely |
+| `root_path` | string | Path to Laravel root inside container (default: `/var/www/html`) |
+| `custom_logs` | []string | Extra log file paths shown in Server Logs |
+| `commands` | []CommandGroup | Per-container command groups (appear before global commands) |
+
+### SSH authentication
+
+laradok tries auth methods in this order:
+
+1. Explicit `key:` path from config (with optional `passphrase:`)
+2. `ssh-agent` (via `SSH_AUTH_SOCK`)
+3. Standard key files: `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.ssh/id_ecdsa`, etc.
+
+---
+
+## Usage
+
+```bash
+laradok                         # use default config
+laradok ~/.config/laradok/config.yaml
+```
+
+### Navigation
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` / `j` / `k` | Navigate list |
+| `Enter` | Select / run |
+| `Esc` | Go back |
+| `PgUp` / `PgDn` | Scroll by page |
+| `F2` | Toggle line wrapping (output screens) |
+| `Ctrl+C` | Quit |
+
+---
+
+## Main Menu
+
+After selecting a container, the main menu offers:
+
+| Option | Description | Shown when |
+|---|---|---|
+| **Commands** | Browse configured command groups | container has custom commands in config |
+| **Artisan Commands** | Full `php artisan` list with autocomplete | `artisan` file found |
+| **Composer Commands** | Browse and run composer scripts | `composer` or `php` found |
+| **Npm Commands** | Browse and run npm scripts | `npm` found |
+| **Docker Commands** | Container management (inspect, restart, stats…) | always |
+| **Custom Command** | Interactive shell with live stdin | always |
+| **Laravel Logs** | Browse and tail `storage/logs/*.log` files | `artisan` file found |
+| **Docker Logs** | Stream container stdout/stderr | always |
+| **Server Logs** | Tail nginx, php-fpm, supervisor logs | always |
+| **Database** | PostgreSQL management (see below) | `psql` found |
+| **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` file found |
+| **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
+
+Menu items are detected automatically with a single `docker exec` probe when the container is opened. A spinner is shown during detection.
+
+---
+
+## PostgreSQL Management
+
+Select a PostgreSQL container from the container list, then choose **Database** from the main menu.
+
+laradok auto-detects credentials from the container's environment variables (`POSTGRES_USER`, `POSTGRES_PASSWORD`). If `POSTGRES_USER` is not set, it falls back to `postgres`.
+
+### Database actions
+
+#### Info & Stats
+- **DB size** — total size on disk
+- **DB version / uptime** — PostgreSQL version and start time
+- **Table sizes (top 20)** — largest tables by total size including indexes
+- **Table row counts** — estimated rows per table from `pg_stat_user_tables`
+- **Cache hit ratio** — buffer cache hit percentage (healthy: >99%)
+- **Active connections** — current sessions with duration and query preview
+- **Long running queries** — queries active for more than 5 seconds
+
+#### Schema
+- **List tables** — all user tables with schema
+- **List schemas** — non-system schemas with owner
+- **List views** — all user-defined views
+- **List sequences** — all sequences with last value
+- **List functions** — user-defined functions with argument signatures
+
+#### Indexes
+- **Unused indexes** — indexes with zero scans (candidates for removal)
+- **Duplicate indexes** — indexes covering identical column sets
+- **Index usage** — scan counts and tuple stats per index
+
+#### Maintenance
+- **Table bloat** — dead tuple counts, live/dead ratio, last autovacuum time
+- **Active locks** — current lock activity with query preview
+- **Replication status** — streaming replication lag per replica
+- **VACUUM ANALYZE** — run full vacuum analyze on all tables
+
+#### Query
+- **Run SQL query** — open SQL input with persistent per-database history
+
+#### Backup
+- **Download SQL dump** — `pg_dump --no-owner --no-acl | gzip`, saves to `~/Downloads/<db>_<timestamp>.sql.gz`
+- **Download SQL dump (inserts)** — same but with `--inserts --column-inserts` (slower, more portable INSERT-based dump)
+- **Download custom dump** — `pg_dump --no-owner --no-acl -Fc`, saves to `~/Downloads/<db>_<timestamp>.dump` (binary format, use with `pg_restore` for selective table restore)
+
+### SQL query history
+
+- Stored per-database in `~/.config/laradok/sql_history.json`
+- Key format: `serverName/containerName/dbName`
+- Up to 200 queries per database
+- `↑` / `↓` to navigate history in the SQL input screen
+- Duplicate queries are deduplicated (most recent position kept)
+
+---
+
+## Architecture
+
+```
+laradok/
+├── main.go
+├── internal/
+│   ├── config/          # YAML config loading, SSH key expansion, SQL history persistence
+│   ├── connection/      # SSHClient and LocalClient implementing the Runner interface
+│   ├── docker/          # Docker/psql command builders, log tailing, DB introspection
+│   ├── msgs/            # Bubble Tea message types for screen navigation and streaming
+│   ├── tui/
+│   │   ├── model.go     # Root App model — screen stack, async orchestration
+│   │   ├── keys.go      # Key bindings
+│   │   └── screens/     # Individual TUI screens
+│   └── dbg/             # Debug logging (conditional)
+```
+
+The `Runner` interface (`RunCommand`, `StreamCommand`, `InteractiveCommand`, `TailFile`) is implemented by both `SSHClient` and `LocalClient`, making all features work identically on local and remote Docker hosts.
+
+---
+
+## Download Storage
+
+Available from the main menu on any Laravel container. Shows the size of `storage/` before transferring, then:
+
+1. Runs `tar -czf - storage/ | base64 -w 76` inside the container (no temp files on server)
+2. Streams base64 lines to the local machine
+3. Decodes and writes to `~/Downloads/<container>_storage_<timestamp>.tar.gz`
+
+Progress is shown line-by-line in the output screen.
+
+---
+
+## File Browser
+
+Available from the main menu on **any** container, rooted at the filesystem root `/`.
+
+- Lists directories first, then files, each with its size — directories sized recursively with `du -sb` (falls back to `du -sk` on BusyBox).
+- `↑↓` to move, `enter`/`→` to open a directory **or view a file in the log viewer** (scroll, tail, lazy-load earlier lines), `←`/`backspace` to go up, `esc` to leave the browser at the root.
+- Press `d` on any file or directory to archive and download it the same way as **Download Storage**: `tar -czf - | base64` streamed to `~/Downloads/<container>_<name>_<timestamp>.tar.gz`. No temp files are created on the server, so nothing is left behind after the transfer.
+
+---
+
+## Data & Privacy
+
+- No telemetry or network calls except to your configured servers
+- SSH credentials stay local; only Docker and psql commands are executed on remote hosts
+- SQL history is stored unencrypted at `~/.config/laradok/sql_history.json`
+- Dump files are written to `~/Downloads/` and never transmitted elsewhere
