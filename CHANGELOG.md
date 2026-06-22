@@ -10,6 +10,7 @@ All notable changes to laradok are documented here.
 - **Terminal** — new container-menu entry that opens an interactive shell inside the container
   - Suspends the TUI and attaches the real terminal (full PTY) via `tea.ExecProcess`, resuming on shell exit
   - Local servers run `docker exec -it`; SSH servers shell out to `ssh -t` with the server's host/port/key
+  - Clears the screen on entry so no TUI remnants are left behind
   - Prefers `bash`, falling back to `sh`
 - **Live Stats screen** — new **Stats** entry in the container menu with real-time charts that refresh every 2s
   - Sparkline graphs for CPU %, memory, network rate, and disk I/O rate (network/disk derived as per-second deltas from cumulative `docker stats` totals)

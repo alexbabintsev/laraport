@@ -18,9 +18,11 @@ type ShellTarget struct {
 	KeyPath    string
 }
 
-// innerShellCmd is the command run inside the container: prefer bash, fall back
-// to sh, so it works on both Debian- and Alpine-based images.
-const innerShellCmd = `exec $(command -v bash || command -v sh)`
+// innerShellCmd is the command run inside the container: clear the screen so no
+// TUI remnants are left behind, then prefer bash, falling back to sh, so it
+// works on both Debian- and Alpine-based images. The printf is a fallback for
+// minimal images that ship no `clear` binary.
+const innerShellCmd = `clear 2>/dev/null || printf '\033[2J\033[H'; exec $(command -v bash || command -v sh)`
 
 // InteractiveShellCmd builds an *exec.Cmd that, when run with the real terminal
 // attached (e.g. via tea.ExecProcess), opens an interactive shell inside the
