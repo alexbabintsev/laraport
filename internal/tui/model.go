@@ -145,6 +145,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screen := screens.NewInfoScreen(a.container.Name, a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.loadInfoCmd())
 
+	case msgs.PushStatsMsg:
+		screen := screens.NewStatsScreen(a.container.Name, a.width, a.height)
+		return a, tea.Batch(a.push(screen), a.sampleStatsCmd(docker.SortByCPU))
+
+	case msgs.StatsTickMsg:
+		// Stop polling once the user has navigated away from the stats screen.
+		if _, ok := a.top().(*screens.StatsScreen); !ok {
+			return a, nil
+		}
+		return a, a.sampleStatsCmd(msg.SortProcs)
+
+	case msgs.StatsSampleMsg:
+		updated, cmd := a.top().Update(msg)
+		a.stack[len(a.stack)-1] = updated
+		return a, cmd
+
 	case msgs.ContainerInfoLoadedMsg:
 		updated, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = updated
@@ -604,6 +620,21 @@ func (a *App) loadRedisPrefixCmd() tea.Cmd {
 	return func() tea.Msg {
 		pass, _ := docker.DetectRedisPassword(a.runner, containerID)
 		return msgs.RedisReadyMsg{CLIPrefix: docker.RedisCLIPrefix(containerID, pass)}
+	}
+}
+
+// sampleStatsCmd takes one docker stats reading plus the top process table for
+// the live stats screen.
+func (a *App) sampleStatsCmd(sortBy docker.ProcSortBy) tea.Cmd {
+	runner := a.runner
+	containerID := a.container.ID
+	return func() tea.Msg {
+		sample, err := docker.SampleContainerStats(runner, containerID)
+		if err != nil {
+			return msgs.StatsSampleMsg{Sample: sample, Err: err}
+		}
+		procs, _ := docker.TopProcesses(runner, containerID, sortBy, 20)
+		return msgs.StatsSampleMsg{Sample: sample, Procs: procs}
 	}
 }
 

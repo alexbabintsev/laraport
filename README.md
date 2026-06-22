@@ -164,6 +164,7 @@ After selecting a container, the main menu offers:
 | Option | Description | Shown when |
 |---|---|---|
 | **Info** | Container details: image, status, network/IP, mounts, and labels (from `docker inspect`) | always |
+| **Stats** | Live CPU / memory / network / disk graphs plus a top-processes table (`c`/`m` to sort) | always |
 | **Commands** | Browse configured command groups | container has custom commands in config |
 | **Artisan Commands** | Full `php artisan` list with autocomplete | `artisan` file found |
 | **Composer Commands** | Browse and run composer scripts | `composer` or `php` found |

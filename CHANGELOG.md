@@ -7,6 +7,10 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Live Stats screen** — new **Stats** entry in the container menu with real-time charts that refresh every 2s
+  - Sparkline graphs for CPU %, memory, network rate, and disk I/O rate (network/disk derived as per-second deltas from cumulative `docker stats` totals)
+  - Top-processes table underneath (from `ps` inside the container) with `c` / `m` to sort by CPU or memory
+  - Polling stops automatically when you leave the screen
 - **Container Info screen** — new **Info** entry in the container menu showing parsed `docker inspect` data: name, ID, image, status, networks/IP, mounts (source → destination), and labels — in a scrollable, sectioned view
 - **Global Docker cleanup** — press `g` in the container list to open server-level Docker commands not tied to a container
   - Disk usage (`docker system df`, verbose) and prune commands for stopped containers, images, volumes, networks, build cache, and full `system prune`

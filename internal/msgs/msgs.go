@@ -40,6 +40,24 @@ type PushDockerCmdMsg struct{}
 // PushInfoMsg navigates to the container info (docker inspect) screen.
 type PushInfoMsg struct{}
 
+// PushStatsMsg navigates to the live stats (graphs) screen.
+type PushStatsMsg struct{}
+
+// StatsTickMsg signals the stats screen wants the next docker stats sample.
+// The App handles it by sampling and replying with StatsSampleMsg. SortProcs
+// selects the process-table ordering for that sample.
+type StatsTickMsg struct {
+	SortProcs docker.ProcSortBy
+}
+
+// StatsSampleMsg carries one live stats reading (and process table) for the
+// stats screen.
+type StatsSampleMsg struct {
+	Sample docker.LiveSample
+	Procs  []docker.ProcessInfo
+	Err    error
+}
+
 // ContainerInfoLoadedMsg carries parsed `docker inspect` data for the info screen.
 type ContainerInfoLoadedMsg struct {
 	Info docker.ContainerInfo
