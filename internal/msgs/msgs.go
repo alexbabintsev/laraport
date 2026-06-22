@@ -37,6 +37,23 @@ type PushOutputMsg struct {
 // PushDockerCmdMsg navigates to the docker commands screen.
 type PushDockerCmdMsg struct{}
 
+// PushGlobalCmdMsg navigates to the global (server-level) docker commands screen.
+type PushGlobalCmdMsg struct{}
+
+// PushConfirmMsg navigates to a yes/no confirmation screen. On confirmation the
+// embedded Run message is dispatched; on cancel the screen is popped.
+type PushConfirmMsg struct {
+	Title  string
+	Detail string        // the exact command or consequence shown to the user
+	Run    PushOutputMsg // dispatched when the user confirms
+}
+
+// ConfirmedMsg is emitted by the confirmation screen when the user accepts.
+// The App pops the confirm screen and dispatches Run.
+type ConfirmedMsg struct {
+	Run PushOutputMsg
+}
+
 // PushRedisCmdMsg navigates to the Redis commands screen.
 type PushRedisCmdMsg struct{}
 

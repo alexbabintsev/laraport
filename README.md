@@ -18,6 +18,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **Interactive shell** — run any command with live stdin/stdout streaming
 - **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle
 - **Docker commands** — inspect, restart, stats, top, diff, network info, and more
+- **Global Docker cleanup** — server-level disk usage and prune commands (images, volumes, networks, build cache, system) with a confirmation step for destructive actions
 - **Database management** — connect to any PostgreSQL, MySQL, MariaDB, Percona, or SQLite container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
 - **Redis inspection** — browse Redis `INFO`, key samples, config, and slowlog via curated `redis-cli` commands (auto-detects `REDIS_PASSWORD`)
 - **MongoDB inspection** — browse server/DB stats, collections, and indexes via curated `mongosh`/`mongo` commands (auto-detects root credentials)
@@ -178,6 +179,17 @@ After selecting a container, the main menu offers:
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
 Menu items are detected automatically with a single `docker exec` probe when the container is opened. A spinner is shown during detection.
+
+---
+
+## Global Docker Cleanup
+
+From the container list, press **`g`** to open server-level Docker commands that are not tied to a single container. These run on the host (or remote server over SSH):
+
+- **Disk usage** — `docker system df` and the verbose per-image/volume breakdown
+- **Cleanup** — prune stopped containers, unused images (dangling or all), volumes, networks, build cache, or everything (`docker system prune`)
+
+Every destructive command shows a **confirmation screen** with the exact command before running — press `y` to proceed or `n` to cancel. Cleanup commands are highlighted in red in the list.
 
 ---
 

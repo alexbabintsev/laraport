@@ -145,6 +145,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screen := screens.NewDockerCmdScreen(a.container.Name, a.width, a.height)
 		return a, a.push(screen)
 
+	case msgs.PushGlobalCmdMsg:
+		screen := screens.NewGlobalCmdScreen(a.activeServer.Name, a.width, a.height)
+		return a, a.push(screen)
+
+	case msgs.PushConfirmMsg:
+		screen := screens.NewConfirmScreen(msg.Title, msg.Detail, msg.Run, a.width, a.height)
+		return a, a.push(screen)
+
+	case msgs.ConfirmedMsg:
+		// Pop the confirmation screen, then run the confirmed command.
+		a.pop()
+		run := msg.Run
+		return a, func() tea.Msg { return run }
+
 	case msgs.PushRedisCmdMsg:
 		screen := screens.NewRedisCmdScreen(a.container.Name, a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.loadRedisPrefixCmd())

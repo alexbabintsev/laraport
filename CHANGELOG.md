@@ -7,6 +7,9 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Global Docker cleanup** — press `g` in the container list to open server-level Docker commands not tied to a container
+  - Disk usage (`docker system df`, verbose) and prune commands for stopped containers, images, volumes, networks, build cache, and full `system prune`
+  - Destructive commands require a `y`/`n` confirmation screen showing the exact command; cleanup entries are highlighted in red
 - **Stopped containers in the list** — the container browser now uses `docker ps -a`, so stopped/exited containers are shown too
   - Non-running containers are dimmed and tagged with their state (e.g. `myapp (exited)`)
   - Sorting puts running containers first, then favorites, then alphabetical — stopped containers group at the bottom

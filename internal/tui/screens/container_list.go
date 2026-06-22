@@ -243,6 +243,11 @@ func (s *ContainerListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return s, nil
 
 	case tea.KeyMsg:
+		// While the filter input is active, let the list consume keystrokes so
+		// letters like "r"/"g" type into the filter instead of triggering shortcuts.
+		if s.list.FilterState() == list.Filtering {
+			break
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			return s, tea.Quit
@@ -263,6 +268,11 @@ func (s *ContainerListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.loading = true
 			s.err = nil
 			return s, tea.Batch(s.spinner.Tick, s.loadContainers())
+		case "g":
+			if s.runner == nil || s.loading {
+				return s, nil // not connected yet
+			}
+			return s, func() tea.Msg { return msgs.PushGlobalCmdMsg{} }
 		}
 
 	case tea.WindowSizeMsg:
@@ -320,7 +330,8 @@ func (s *ContainerListScreen) helpBar() string {
 	return styles.StatusBar.Width(s.width).Render(
 		styles.StatusBarKey.Render("↑↓") + " navigate  " +
 			styles.StatusBarKey.Render("enter") + " select  " +
-			styles.StatusBarKey.Render("r") + " refresh  " +
+			styles.StatusBarKey.Render("g") + " cleanup  " +
+				styles.StatusBarKey.Render("r") + " refresh  " +
 			styles.StatusBarKey.Render("esc") + " back",
 	)
 }
