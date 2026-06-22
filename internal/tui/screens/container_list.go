@@ -3,6 +3,7 @@ package screens
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/alexbabintsev/laradok/internal/config"
 	"github.com/alexbabintsev/laradok/internal/docker"
@@ -18,6 +19,8 @@ type containerItem struct {
 	container   docker.Container
 	displayName string
 	favorite    bool
+	stat        docker.ContainerStat
+	hasStat     bool
 }
 
 func (c containerItem) Title() string {
@@ -26,17 +29,68 @@ func (c containerItem) Title() string {
 	}
 	return c.displayName
 }
+
 func (c containerItem) Description() string {
-	return fmt.Sprintf("%s", c.container.Image)
-	// return fmt.Sprintf("%s • %s", c.container.Image, c.container.ID[:12])
+	parts := []string{}
+	if s := strings.TrimSpace(c.container.Status); s != "" {
+		parts = append(parts, s)
+	}
+	if c.hasStat {
+		if cpu := strings.TrimSpace(c.stat.CPUPerc); cpu != "" {
+			parts = append(parts, "CPU "+cpu)
+		}
+		if mem := strings.TrimSpace(c.stat.MemUsage); mem != "" {
+			parts = append(parts, "Mem "+mem)
+		}
+	}
+	if p := shortPorts(c.container.Ports); p != "" {
+		parts = append(parts, p)
+	}
+	if len(parts) == 0 {
+		return c.container.Image
+	}
+	return strings.Join(parts, " · ")
 }
+
 func (c containerItem) FilterValue() string { return c.displayName }
+
+// shortPorts condenses a docker ports string to just published host ports,
+// e.g. "0.0.0.0:8080->80/tcp, :::8080->80/tcp" → ":8080->80".
+func shortPorts(ports string) string {
+	ports = strings.TrimSpace(ports)
+	if ports == "" {
+		return ""
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range strings.Split(ports, ",") {
+		p = strings.TrimSpace(p)
+		arrow := strings.Index(p, "->")
+		if arrow < 0 {
+			continue // unpublished port, skip
+		}
+		hostPart := p[:arrow]
+		// keep only the :port suffix of the host side
+		if colon := strings.LastIndex(hostPart, ":"); colon >= 0 {
+			hostPart = hostPart[colon:]
+		}
+		target := strings.TrimSuffix(p[arrow+2:], "/tcp")
+		mapping := hostPart + "->" + target
+		if !seen[mapping] {
+			seen[mapping] = true
+			out = append(out, mapping)
+		}
+	}
+	return strings.Join(out, " ")
+}
 
 // ContainerListScreen loads and shows running containers for a server.
 type ContainerListScreen struct {
 	server           config.Server
 	runner           docker.Runner
 	containerConfigs []config.ContainerConfig
+	containers       []docker.Container
+	stats            map[string]docker.ContainerStat
 	list             list.Model
 	spinner          spinner.Model
 	loading          bool
@@ -95,6 +149,52 @@ func (s *ContainerListScreen) loadContainers() tea.Cmd {
 	}
 }
 
+// loadStats fetches a one-shot resource snapshot for all containers. It runs
+// after the list is already shown because docker stats is comparatively slow.
+func (s *ContainerListScreen) loadStats() tea.Cmd {
+	runner := s.runner
+	return func() tea.Msg {
+		stats, err := docker.ListContainerStats(runner)
+		return msgs.ContainerStatsLoadedMsg{Stats: stats, Err: err}
+	}
+}
+
+// rebuildItems constructs the list items from the stored containers, applying
+// config (hidden/favorite/displayName) and any loaded stats.
+func (s *ContainerListScreen) rebuildItems() tea.Cmd {
+	var items []containerItem
+	for _, c := range s.containers {
+		cc, found := s.server.FindContainerConfig(c.Name)
+		if found && cc.Hidden {
+			continue
+		}
+		displayName := c.Name
+		if found && cc.DisplayName != "" {
+			displayName = cc.DisplayName
+		}
+		st, hasStat := docker.LookupStat(s.stats, c.Name, c.ID)
+		items = append(items, containerItem{
+			container:   c,
+			displayName: displayName,
+			favorite:    found && cc.Favorite,
+			stat:        st,
+			hasStat:     hasStat,
+		})
+	}
+	// Sort: favorites first, then alphabetical
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].favorite != items[j].favorite {
+			return items[i].favorite
+		}
+		return items[i].displayName < items[j].displayName
+	})
+	listItems := make([]list.Item, len(items))
+	for i, it := range items {
+		listItems[i] = it
+	}
+	return s.list.SetItems(listItems)
+}
+
 func (s *ContainerListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgs.ServerConnectedMsg:
@@ -115,36 +215,17 @@ func (s *ContainerListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.err = msg.Err
 			return s, nil
 		}
-		// Build items, applying hidden/favorite/displayName via glob-aware lookup
-		var items []containerItem
-		for _, c := range msg.Containers {
-			cc, found := s.server.FindContainerConfig(c.Name)
-			if found && cc.Hidden {
-				continue
-			}
-			displayName := c.Name
-			if found && cc.DisplayName != "" {
-				displayName = cc.DisplayName
-			}
-			items = append(items, containerItem{
-				container:   c,
-				displayName: displayName,
-				favorite:    found && cc.Favorite,
-			})
+		s.containers = msg.Containers
+		cmd := s.rebuildItems()
+		// Lazily fetch live CPU/Mem stats now that the list is visible.
+		return s, tea.Batch(cmd, s.loadStats())
+
+	case msgs.ContainerStatsLoadedMsg:
+		if msg.Err == nil {
+			s.stats = msg.Stats
+			return s, s.rebuildItems()
 		}
-		// Sort: favorites first, then alphabetical
-		sort.Slice(items, func(i, j int) bool {
-			if items[i].favorite != items[j].favorite {
-				return items[i].favorite
-			}
-			return items[i].displayName < items[j].displayName
-		})
-		listItems := make([]list.Item, len(items))
-		for i, it := range items {
-			listItems[i] = it
-		}
-		cmd := s.list.SetItems(listItems)
-		return s, cmd
+		return s, nil
 
 	case tea.KeyMsg:
 		switch msg.String() {

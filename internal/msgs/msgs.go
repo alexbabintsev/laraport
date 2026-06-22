@@ -261,6 +261,13 @@ type ContainersLoadedMsg struct {
 	Err        error
 }
 
+// ContainerStatsLoadedMsg carries live resource stats for all containers,
+// loaded lazily after the container list is shown. Keyed by name and short ID.
+type ContainerStatsLoadedMsg struct {
+	Stats map[string]docker.ContainerStat
+	Err   error
+}
+
 // ServerConnectedMsg is returned after an async SSH (or local) connection attempt.
 type ServerConnectedMsg struct {
 	Server config.Server

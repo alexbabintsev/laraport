@@ -10,7 +10,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 ## Features
 
 - **Multi-server support** — connect to any number of SSH servers or use your local Docker socket
-- **Container browser** — lists all running Docker containers with favorites, custom display names, and filtering
+- **Container browser** — lists all running Docker containers with favorites, custom display names, filtering, and per-container status, published ports, and live CPU/memory usage
 - **Artisan commands** — full autocomplete list of all `php artisan` commands with descriptions
 - **Composer commands** — browse and run composer scripts; auto-downloads `composer.phar` if not installed
 - **npm scripts** — browse and run scripts from `package.json`

@@ -7,6 +7,10 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Container list stats** — each container now shows its status (uptime/health), published host ports, and live CPU / memory usage
+  - Status and ports come free from the existing `docker ps` call
+  - CPU/memory are fetched lazily with a single background `docker stats --no-stream` after the list is shown, so the list never blocks on the slower stats call
+  - Refreshing the list (`r`) re-fetches both
 - **MySQL support** — the **Database** menu now works with MySQL containers in addition to PostgreSQL
   - Engine auto-detected via the container probe (`mysql` client → MySQL; `psql` still wins if both are present)
   - Credentials read from `MYSQL_ROOT_PASSWORD` (preferred, as `root`) or `MYSQL_USER` / `MYSQL_PASSWORD`
