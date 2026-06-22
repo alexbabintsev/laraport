@@ -2,7 +2,7 @@
 
 A terminal UI for managing Laravel applications running inside Docker containers — locally or on remote servers over SSH.
 
-![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)
+![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%2F%20Linux-lightgrey)
 
 ---
@@ -46,7 +46,7 @@ mv laradok /usr/local/bin/
 
 - Docker installed and accessible on target hosts
 - SSH key-based auth for remote servers (or `ssh-agent`)
-- Go 1.22+ (only for building from source)
+- Go 1.26+ (only for building from source)
 
 ---
 
