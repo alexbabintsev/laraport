@@ -258,7 +258,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screen := screens.NewOutputScreen(title, a.width, a.height)
 		var ch <-chan string
 		var err error
-		if msg.Engine == docker.EngineMySQL {
+		if msg.Engine.IsMySQLFamily() {
 			ch, err = docker.DumpMySQLDatabase(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
 		} else if msg.CustomFormat {
 			ch, err = docker.DumpDatabaseCustom(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
@@ -557,7 +557,7 @@ func (a *App) loadDBCredsCmd() tea.Cmd {
 	return func() tea.Msg {
 		var user, pass string
 		var err error
-		if engine == docker.EngineMySQL {
+		if engine.IsMySQLFamily() {
 			user, pass, err = docker.DetectMySQLCredentials(a.runner, a.container.ID)
 		} else {
 			user, pass, err = docker.DetectPostgresCredentials(a.runner, a.container.ID)
@@ -572,7 +572,7 @@ func (a *App) loadDBListCmd(user, password string) tea.Cmd {
 	return func() tea.Msg {
 		var dbs []string
 		var err error
-		if engine == docker.EngineMySQL {
+		if engine.IsMySQLFamily() {
 			dbs, err = docker.ListMySQLDatabases(a.runner, a.container.ID, user, password)
 		} else {
 			dbs, err = docker.ListDatabases(a.runner, a.container.ID, user, password)

@@ -12,6 +12,8 @@ type ContainerCaps struct {
 	HasNpm      bool // npm binary present
 	HasPostgres bool // psql binary present
 	HasMySQL    bool // mysql binary present
+	IsMariaDB   bool // mysql client reports a MariaDB distribution
+	IsPercona   bool // mysql client reports a Percona distribution
 	HasPHP      bool // php binary present
 }
 
@@ -21,12 +23,18 @@ func (c ContainerCaps) HasDatabase() bool {
 }
 
 // DBEngine returns the database engine to use for this container.
-// PostgreSQL takes precedence when both clients happen to be installed.
+// PostgreSQL takes precedence when multiple clients happen to be installed.
 func (c ContainerCaps) DBEngine() DBEngine {
-	if c.HasPostgres {
+	switch {
+	case c.HasPostgres:
 		return EnginePostgres
+	case c.IsMariaDB:
+		return EngineMariaDB
+	case c.IsPercona:
+		return EnginePercona
+	default:
+		return EngineMySQL
 	}
-	return EngineMySQL
 }
 
 // DetectCapabilities probes the container with a single sh -c command to check
@@ -44,6 +52,7 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`command -v npm >/dev/null 2>&1 && echo HAS_NPM; `+
 			`command -v psql >/dev/null 2>&1 && echo HAS_POSTGRES; `+
 			`command -v mysql >/dev/null 2>&1 && echo HAS_MYSQL; `+
+			`command -v mysql >/dev/null 2>&1 && { v=$(mysql --version 2>/dev/null); echo "$v" | grep -qi mariadb && echo IS_MARIADB; echo "$v" | grep -qi percona && echo IS_PERCONA; }; `+
 			`command -v php >/dev/null 2>&1 && echo HAS_PHP; `+
 			`true`,
 		root, root,
@@ -71,6 +80,10 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			caps.HasPostgres = true
 		case "HAS_MYSQL":
 			caps.HasMySQL = true
+		case "IS_MARIADB":
+			caps.IsMariaDB = true
+		case "IS_PERCONA":
+			caps.IsPercona = true
 		case "HAS_PHP":
 			caps.HasPHP = true
 		}

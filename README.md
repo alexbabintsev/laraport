@@ -18,7 +18,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **Interactive shell** — run any command with live stdin/stdout streaming
 - **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle
 - **Docker commands** — inspect, restart, stats, top, diff, network info, and more
-- **Database management** — connect to any PostgreSQL or MySQL container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
+- **Database management** — connect to any PostgreSQL, MySQL, MariaDB, or Percona container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
 - **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laradok/sql_history.json`)
 
 ---
@@ -169,7 +169,7 @@ After selecting a container, the main menu offers:
 | **Laravel Logs** | Browse and tail `storage/logs/*.log` files | `artisan` file found |
 | **Docker Logs** | Stream container stdout/stderr | always |
 | **Server Logs** | Tail nginx, php-fpm, supervisor logs | always |
-| **Database** | PostgreSQL or MySQL management (see below) | `psql` or `mysql` found |
+| **Database** | PostgreSQL / MySQL / MariaDB / Percona management (see below) | `psql` or `mysql` found |
 | **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` file found |
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
@@ -179,11 +179,16 @@ Menu items are detected automatically with a single `docker exec` probe when the
 
 ## Database Management
 
-Select a container running PostgreSQL or MySQL from the container list, then choose **Database** from the main menu. The engine is detected automatically (`psql` → PostgreSQL, `mysql` → MySQL; PostgreSQL wins if both clients are present).
+Select a container running PostgreSQL, MySQL, MariaDB, or Percona Server from the container list, then choose **Database** from the main menu. The engine is detected automatically:
 
-For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For **MySQL**, it prefers `root` with `MYSQL_ROOT_PASSWORD`, otherwise `MYSQL_USER` / `MYSQL_PASSWORD`.
+- `psql` → **PostgreSQL** (wins if multiple clients are present)
+- `mysql` → **MySQL**, or **MariaDB** / **Percona** if the client version string identifies that distribution
 
-System databases are hidden from the list (PostgreSQL: `postgres`, `template0`, `template1`; MySQL: `information_schema`, `performance_schema`, `mysql`, `sys`).
+MariaDB and Percona reuse the MySQL client, `information_schema`, and `mysqldump`, so they share the same actions as MySQL — only the engine label differs.
+
+For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For the **MySQL family** (MySQL / MariaDB / Percona), it prefers `root` with `MYSQL_ROOT_PASSWORD`, otherwise `MYSQL_USER` / `MYSQL_PASSWORD`.
+
+System databases are hidden from the list (PostgreSQL: `postgres`, `template0`, `template1`; MySQL family: `information_schema`, `performance_schema`, `mysql`, `sys`).
 
 ### PostgreSQL actions
 
@@ -222,9 +227,9 @@ System databases are hidden from the list (PostgreSQL: `postgres`, `template0`, 
 - **Download SQL dump (inserts)** — same but with `--inserts --column-inserts` (slower, more portable INSERT-based dump)
 - **Download custom dump** — `pg_dump --no-owner --no-acl -Fc`, saves to `~/Downloads/<db>_<timestamp>.dump` (binary format, use with `pg_restore` for selective table restore)
 
-### MySQL actions
+### MySQL / MariaDB / Percona actions
 
-MySQL exposes an equivalent set of actions built on `information_schema` / `performance_schema`:
+The MySQL family exposes an equivalent set of actions built on `information_schema` / `performance_schema`:
 
 - **Info & Stats** — DB size, version/uptime, table sizes (top 20), table row counts, active connections, long running queries
 - **Schema** — list tables, views, columns, foreign keys, routines (procedures/functions)

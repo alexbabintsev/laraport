@@ -28,7 +28,7 @@ type dbActionGroup struct {
 
 // buildDBActionGroups dispatches to the engine-specific action groups.
 func buildDBActionGroups(engine docker.DBEngine, dbName string) []dbActionGroup {
-	if engine == docker.EngineMySQL {
+	if engine.IsMySQLFamily() {
 		return buildMySQLActionGroups(dbName)
 	}
 	return buildPostgresActionGroups(dbName)

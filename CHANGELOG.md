@@ -13,6 +13,7 @@ All notable changes to laradok are documented here.
   - Lists non-system databases (excludes `information_schema`, `performance_schema`, `mysql`, `sys`)
   - Per-database action menu mirroring the PostgreSQL one: Info & Stats, Schema, Indexes, Maintenance, Run SQL query, and SQL dump download
   - **Download SQL dump** via `mysqldump --single-transaction --no-tablespaces | gzip` → `~/Downloads/<db>_<timestamp>.sql.gz`
+- **MariaDB & Percona support** — both are detected from the `mysql --version` string and reuse the full MySQL pipeline (client, `information_schema`, `mysqldump`); only the engine label differs
 - **File Browser** — walk the container filesystem from the main menu (any container, rooted at `/`)
   - Lists directories first then files, each with its size (`du -sb` for dirs, byte size for files)
   - Navigate with `↑↓`, `enter`/`→` to open a directory or view a file in the log viewer, `←`/`backspace` to go up, `esc` to leave
