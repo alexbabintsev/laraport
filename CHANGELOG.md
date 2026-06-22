@@ -7,6 +7,9 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Stopped containers in the list** — the container browser now uses `docker ps -a`, so stopped/exited containers are shown too
+  - Non-running containers are dimmed and tagged with their state (e.g. `myapp (exited)`)
+  - Sorting puts running containers first, then favorites, then alphabetical — stopped containers group at the bottom
 - **Container list stats** — each container now shows its status (uptime/health), published host ports, and live CPU / memory usage
   - Status and ports come free from the existing `docker ps` call
   - CPU/memory are fetched lazily with a single background `docker stats --no-stream` after the list is shown, so the list never blocks on the slower stats call

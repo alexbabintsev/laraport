@@ -24,10 +24,19 @@ type containerItem struct {
 }
 
 func (c containerItem) Title() string {
+	name := c.displayName
 	if c.favorite {
-		return lipgloss.NewStyle().Foreground(styles.ColorWarning).Render("* " + c.displayName)
+		name = "* " + name
 	}
-	return c.displayName
+	// Dim and tag containers that are not running so they stand out as inactive.
+	if c.container.State != "running" && c.container.State != "" {
+		return lipgloss.NewStyle().Foreground(styles.ColorMuted).
+			Render(name + " (" + c.container.State + ")")
+	}
+	if c.favorite {
+		return lipgloss.NewStyle().Foreground(styles.ColorWarning).Render(name)
+	}
+	return name
 }
 
 func (c containerItem) Description() string {
@@ -181,8 +190,14 @@ func (s *ContainerListScreen) rebuildItems() tea.Cmd {
 			hasStat:     hasStat,
 		})
 	}
-	// Sort: favorites first, then alphabetical
+	// Sort: running first, then favorites, then alphabetical. This keeps
+	// stopped containers grouped at the bottom of the list.
 	sort.Slice(items, func(i, j int) bool {
+		ri := items[i].container.State == "running"
+		rj := items[j].container.State == "running"
+		if ri != rj {
+			return ri
+		}
 		if items[i].favorite != items[j].favorite {
 			return items[i].favorite
 		}

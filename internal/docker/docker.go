@@ -42,12 +42,13 @@ type Container struct {
 	Ports  string // published ports, e.g. "0.0.0.0:8080->80/tcp"
 }
 
-// ListContainers returns all running containers on the target host.
+// ListContainers returns all containers on the target host, including stopped
+// ones (docker ps -a).
 // Retries up to 5 times, continuing as long as the result keeps growing — this handles
 // truncated SSH output right after connection open where docker ps output arrives partially.
 func ListContainers(r Runner) ([]Container, error) {
 	format := `{"id":"{{.ID}}","name":"{{.Names}}","image":"{{.Image}}","state":"{{.State}}","status":"{{.Status}}","ports":"{{.Ports}}"}`
-	cmd := fmt.Sprintf(`docker ps --format '%s'`, format)
+	cmd := fmt.Sprintf(`docker ps -a --format '%s'`, format)
 
 	var best []Container
 	for attempt := 0; attempt < 5; attempt++ {
