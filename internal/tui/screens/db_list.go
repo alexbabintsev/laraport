@@ -88,7 +88,11 @@ func (s *DBListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		s.databases = msg.Databases
 		if len(s.databases) == 0 {
-			s.errMsg = "no databases found"
+			if s.engine == docker.EngineSQLite {
+				s.errMsg = "no .sqlite/.db files found under the app root"
+			} else {
+				s.errMsg = "no databases found"
+			}
 		}
 		return s, nil
 
@@ -149,10 +153,15 @@ func (s *DBListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (s *DBListScreen) View() string {
 	title := styles.TitleBar.Render(s.engine.Label() + " Databases")
 
+	loadingMsg := " detecting credentials and listing databases..."
+	if s.engine == docker.EngineSQLite {
+		loadingMsg = " searching for SQLite database files..."
+	}
+
 	var body string
 	if s.loading {
 		body = lipgloss.NewStyle().Padding(1, 2).Render(
-			s.sp.View() + " detecting credentials and listing databases...",
+			s.sp.View() + loadingMsg,
 		)
 	} else if s.errMsg != "" {
 		body = lipgloss.NewStyle().Padding(1, 2).

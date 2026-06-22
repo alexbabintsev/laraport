@@ -14,6 +14,10 @@ All notable changes to laradok are documented here.
   - Per-database action menu mirroring the PostgreSQL one: Info & Stats, Schema, Indexes, Maintenance, Run SQL query, and SQL dump download
   - **Download SQL dump** via `mysqldump --single-transaction --no-tablespaces | gzip` → `~/Downloads/<db>_<timestamp>.sql.gz`
 - **MariaDB & Percona support** — both are detected from the `mysql --version` string and reuse the full MySQL pipeline (client, `information_schema`, `mysqldump`); only the engine label differs
+- **SQLite support** — file-based databases via the `sqlite3` client (used when no server DB client is present)
+  - Scans the app root (`database/`, `storage/`, root, `/data`) for `*.sqlite` / `*.sqlite3` / `*.db` files and lists each as a database
+  - No credentials needed; actions use `sqlite_master` and `PRAGMA` (version, size, row counts, schema, indexes, integrity/foreign-key checks, `VACUUM`)
+  - **Download SQL dump** via `sqlite3 <file> .dump | gzip` → `~/Downloads/<file>_<timestamp>.sql.gz`
 - **File Browser** — walk the container filesystem from the main menu (any container, rooted at `/`)
   - Lists directories first then files, each with its size (`du -sb` for dirs, byte size for files)
   - Navigate with `↑↓`, `enter`/`→` to open a directory or view a file in the log viewer, `←`/`backspace` to go up, `esc` to leave

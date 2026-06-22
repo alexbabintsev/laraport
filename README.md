@@ -18,7 +18,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **Interactive shell** — run any command with live stdin/stdout streaming
 - **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle
 - **Docker commands** — inspect, restart, stats, top, diff, network info, and more
-- **Database management** — connect to any PostgreSQL, MySQL, MariaDB, or Percona container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
+- **Database management** — connect to any PostgreSQL, MySQL, MariaDB, Percona, or SQLite container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
 - **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laradok/sql_history.json`)
 
 ---
@@ -169,7 +169,7 @@ After selecting a container, the main menu offers:
 | **Laravel Logs** | Browse and tail `storage/logs/*.log` files | `artisan` file found |
 | **Docker Logs** | Stream container stdout/stderr | always |
 | **Server Logs** | Tail nginx, php-fpm, supervisor logs | always |
-| **Database** | PostgreSQL / MySQL / MariaDB / Percona management (see below) | `psql` or `mysql` found |
+| **Database** | PostgreSQL / MySQL / MariaDB / Percona / SQLite management (see below) | `psql`, `mysql`, or `sqlite3` found |
 | **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` file found |
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
@@ -179,14 +179,15 @@ Menu items are detected automatically with a single `docker exec` probe when the
 
 ## Database Management
 
-Select a container running PostgreSQL, MySQL, MariaDB, or Percona Server from the container list, then choose **Database** from the main menu. The engine is detected automatically:
+Select a container running PostgreSQL, MySQL, MariaDB, Percona Server, or SQLite from the container list, then choose **Database** from the main menu. The engine is detected automatically:
 
 - `psql` → **PostgreSQL** (wins if multiple clients are present)
 - `mysql` → **MySQL**, or **MariaDB** / **Percona** if the client version string identifies that distribution
+- `sqlite3` → **SQLite** (used only when no server client is present)
 
 MariaDB and Percona reuse the MySQL client, `information_schema`, and `mysqldump`, so they share the same actions as MySQL — only the engine label differs.
 
-For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For the **MySQL family** (MySQL / MariaDB / Percona), it prefers `root` with `MYSQL_ROOT_PASSWORD`, otherwise `MYSQL_USER` / `MYSQL_PASSWORD`.
+For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For the **MySQL family** (MySQL / MariaDB / Percona), it prefers `root` with `MYSQL_ROOT_PASSWORD`, otherwise `MYSQL_USER` / `MYSQL_PASSWORD`. **SQLite** needs no credentials — laradok scans the app root (e.g. `database/`, `storage/`) for `*.sqlite`, `*.sqlite3`, and `*.db` files and lists each file as a database.
 
 System databases are hidden from the list (PostgreSQL: `postgres`, `template0`, `template1`; MySQL family: `information_schema`, `performance_schema`, `mysql`, `sys`).
 
@@ -237,6 +238,17 @@ The MySQL family exposes an equivalent set of actions built on `information_sche
 - **Maintenance** — table status (engine, free space, auto_increment), InnoDB lock waits, generate `ANALYZE TABLE` statements
 - **Query** — **Run SQL query** with persistent per-database history
 - **Backup** — **Download SQL dump** via `mysqldump --single-transaction --no-tablespaces | gzip`, saves to `~/Downloads/<db>_<timestamp>.sql.gz`
+
+### SQLite actions
+
+SQLite is file-based, so its actions run against the selected `.sqlite` file via the `sqlite3` client (`sqlite_master` and `PRAGMA` instead of `information_schema`):
+
+- **Info & Stats** — SQLite version, DB size (page count × page size), per-table row counts, encoding & journal/WAL mode
+- **Schema** — list tables, views, triggers, and stored `CREATE TABLE` definitions
+- **Indexes** — list indexes per table and their `CREATE INDEX` definitions
+- **Maintenance** — `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, freelist page count, and `VACUUM`
+- **Query** — **Run SQL query** with persistent per-file history
+- **Backup** — **Download SQL dump** via `sqlite3 <file> .dump | gzip`, saves to `~/Downloads/<file>_<timestamp>.sql.gz`
 
 ### SQL query history
 

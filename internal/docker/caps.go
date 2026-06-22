@@ -14,12 +14,13 @@ type ContainerCaps struct {
 	HasMySQL    bool // mysql binary present
 	IsMariaDB   bool // mysql client reports a MariaDB distribution
 	IsPercona   bool // mysql client reports a Percona distribution
+	HasSQLite   bool // sqlite3 binary present
 	HasPHP      bool // php binary present
 }
 
 // HasDatabase reports whether any supported database engine is present.
 func (c ContainerCaps) HasDatabase() bool {
-	return c.HasPostgres || c.HasMySQL
+	return c.HasPostgres || c.HasMySQL || c.HasSQLite
 }
 
 // DBEngine returns the database engine to use for this container.
@@ -32,8 +33,11 @@ func (c ContainerCaps) DBEngine() DBEngine {
 		return EngineMariaDB
 	case c.IsPercona:
 		return EnginePercona
-	default:
+	case c.HasMySQL:
 		return EngineMySQL
+	default:
+		// Only reached when HasDatabase() is true but no server client exists.
+		return EngineSQLite
 	}
 }
 
@@ -53,6 +57,7 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`command -v psql >/dev/null 2>&1 && echo HAS_POSTGRES; `+
 			`command -v mysql >/dev/null 2>&1 && echo HAS_MYSQL; `+
 			`command -v mysql >/dev/null 2>&1 && { v=$(mysql --version 2>/dev/null); echo "$v" | grep -qi mariadb && echo IS_MARIADB; echo "$v" | grep -qi percona && echo IS_PERCONA; }; `+
+			`command -v sqlite3 >/dev/null 2>&1 && echo HAS_SQLITE; `+
 			`command -v php >/dev/null 2>&1 && echo HAS_PHP; `+
 			`true`,
 		root, root,
@@ -84,6 +89,8 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			caps.IsMariaDB = true
 		case "IS_PERCONA":
 			caps.IsPercona = true
+		case "HAS_SQLITE":
+			caps.HasSQLite = true
 		case "HAS_PHP":
 			caps.HasPHP = true
 		}

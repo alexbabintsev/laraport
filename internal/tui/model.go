@@ -213,6 +213,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		prefix := a.activeServer.Name + "/" + a.container.Name
 		a.dbEngine = msg.Engine
 		screen := screens.NewDBListScreen(prefix, msg.Engine, a.width, a.height)
+		// SQLite has no credentials — skip detection and list database files directly.
+		if msg.Engine == docker.EngineSQLite {
+			return a, tea.Batch(a.push(screen), a.loadDBListCmd("", ""))
+		}
 		return a, tea.Batch(a.push(screen), a.loadDBCredsCmd())
 
 	case msgs.DBCredsLoadedMsg:
@@ -258,7 +262,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screen := screens.NewOutputScreen(title, a.width, a.height)
 		var ch <-chan string
 		var err error
-		if msg.Engine.IsMySQLFamily() {
+		if msg.Engine == docker.EngineSQLite {
+			ch, err = docker.DumpSQLiteDatabase(a.runner, a.container.ID, msg.DBName)
+		} else if msg.Engine.IsMySQLFamily() {
 			ch, err = docker.DumpMySQLDatabase(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
 		} else if msg.CustomFormat {
 			ch, err = docker.DumpDatabaseCustom(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
@@ -569,12 +575,16 @@ func (a *App) loadDBCredsCmd() tea.Cmd {
 // loadDBListCmd lists databases in the active database container.
 func (a *App) loadDBListCmd(user, password string) tea.Cmd {
 	engine := a.dbEngine
+	rootPath := a.containerCfg.RootPath
 	return func() tea.Msg {
 		var dbs []string
 		var err error
-		if engine.IsMySQLFamily() {
+		switch {
+		case engine == docker.EngineSQLite:
+			dbs, err = docker.ListSQLiteDatabases(a.runner, a.container.ID, rootPath)
+		case engine.IsMySQLFamily():
 			dbs, err = docker.ListMySQLDatabases(a.runner, a.container.ID, user, password)
-		} else {
+		default:
 			dbs, err = docker.ListDatabases(a.runner, a.container.ID, user, password)
 		}
 		return msgs.DBListLoadedMsg{Databases: dbs, Err: err}
