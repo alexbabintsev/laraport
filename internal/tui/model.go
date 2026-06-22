@@ -145,6 +145,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		screen := screens.NewDockerCmdScreen(a.container.Name, a.width, a.height)
 		return a, a.push(screen)
 
+	case msgs.PushRedisCmdMsg:
+		screen := screens.NewRedisCmdScreen(a.container.Name, a.width, a.height)
+		return a, tea.Batch(a.push(screen), a.loadRedisPrefixCmd())
+
+	case msgs.RedisReadyMsg:
+		updated, cmd := a.top().Update(msg)
+		a.stack[len(a.stack)-1] = updated
+		return a, cmd
+
 	case msgs.PushArtisanCmdMsg:
 		screen := screens.NewArtisanCmdScreen(a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.loadArtisanCommandsCmd())
@@ -554,6 +563,15 @@ func (a *App) loadCapsCmd() tea.Cmd {
 	return func() tea.Msg {
 		caps, _ := docker.DetectCapabilities(a.runner, a.container.ID, a.containerCfg.RootPath)
 		return msgs.ContainerCapsLoadedMsg{Caps: caps}
+	}
+}
+
+// loadRedisPrefixCmd detects the Redis password and builds the redis-cli prefix.
+func (a *App) loadRedisPrefixCmd() tea.Cmd {
+	containerID := a.container.ID
+	return func() tea.Msg {
+		pass, _ := docker.DetectRedisPassword(a.runner, containerID)
+		return msgs.RedisReadyMsg{CLIPrefix: docker.RedisCLIPrefix(containerID, pass)}
 	}
 }
 

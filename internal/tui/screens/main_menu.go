@@ -87,9 +87,14 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 		menuItem{"Server Logs", "Tail nginx, php, supervisor and other service logs"},
 	)
 
-	// Database (PostgreSQL or MySQL)
+	// Database (PostgreSQL, MySQL family, or SQLite)
 	if caps.HasDatabase() {
 		items = append(items, menuItem{"Database", "Browse databases, run SQL queries, download dumps"})
+	}
+
+	// Redis
+	if caps.HasRedis {
+		items = append(items, menuItem{"Redis", "Inspect Redis: INFO, keys, config, slowlog"})
 	}
 
 	// Laravel storage download
@@ -174,6 +179,8 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "Database":
 					engine := s.dbEngine
 					return s, func() tea.Msg { return msgs.PushDBScreenMsg{Engine: engine} }
+				case "Redis":
+					return s, func() tea.Msg { return msgs.PushRedisCmdMsg{} }
 				case "Download Storage":
 					return s, func() tea.Msg { return msgs.PushStorageDownloadMsg{} }
 				case "File Browser":

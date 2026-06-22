@@ -19,6 +19,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle
 - **Docker commands** — inspect, restart, stats, top, diff, network info, and more
 - **Database management** — connect to any PostgreSQL, MySQL, MariaDB, Percona, or SQLite container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
+- **Redis inspection** — browse Redis `INFO`, key samples, config, and slowlog via curated `redis-cli` commands (auto-detects `REDIS_PASSWORD`)
 - **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laradok/sql_history.json`)
 
 ---
@@ -170,6 +171,7 @@ After selecting a container, the main menu offers:
 | **Docker Logs** | Stream container stdout/stderr | always |
 | **Server Logs** | Tail nginx, php-fpm, supervisor logs | always |
 | **Database** | PostgreSQL / MySQL / MariaDB / Percona / SQLite management (see below) | `psql`, `mysql`, or `sqlite3` found |
+| **Redis** | Inspect Redis via curated `redis-cli` commands (see below) | `redis-cli` found |
 | **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` file found |
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
@@ -257,6 +259,21 @@ SQLite is file-based, so its actions run against the selected `.sqlite` file via
 - Up to 200 queries per database
 - `↑` / `↓` to navigate history in the SQL input screen
 - Duplicate queries are deduplicated (most recent position kept)
+
+---
+
+## Redis
+
+Select a container with the `redis-cli` client, then choose **Redis** from the main menu. laradok auto-detects the password from `REDIS_PASSWORD` (or the credentials in `REDIS_URL`) and runs every command as `docker exec <container> redis-cli [-a <password>] …`.
+
+The screen offers curated, read-only commands grouped by purpose:
+
+- **Info & Stats** — `INFO server` / `memory` / `stats` / `clients` / `keyspace` / `replication`, `DBSIZE`, `CLIENT LIST`
+- **Keys** — sample the first 20 keys and count keys via non-blocking `SCAN`, key distribution, `SLOWLOG GET 10`
+- **Configuration** — `CONFIG GET` for `maxmemory`, `maxmemory-policy`, `save`, `appendonly`
+- **Maintenance** — `PING`, `LASTSAVE`, `LATENCY DOCTOR`
+
+Key listing uses `redis-cli --scan` (non-blocking) rather than `KEYS *`, so it is safe to run against production instances.
 
 ---
 

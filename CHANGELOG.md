@@ -18,6 +18,9 @@ All notable changes to laradok are documented here.
   - Scans the app root (`database/`, `storage/`, root, `/data`) for `*.sqlite` / `*.sqlite3` / `*.db` files and lists each as a database
   - No credentials needed; actions use `sqlite_master` and `PRAGMA` (version, size, row counts, schema, indexes, integrity/foreign-key checks, `VACUUM`)
   - **Download SQL dump** via `sqlite3 <file> .dump | gzip` → `~/Downloads/<file>_<timestamp>.sql.gz`
+- **Redis inspection** — new **Redis** menu item (shown when `redis-cli` is present)
+  - Auto-detects the password from `REDIS_PASSWORD` / `REDIS_URL` and runs commands as `docker exec … redis-cli [-a …]`
+  - Curated read-only commands: `INFO` sections, `DBSIZE`, `CLIENT LIST`, key sampling/counting via non-blocking `SCAN`, `SLOWLOG`, `CONFIG GET`, `PING`, `LASTSAVE`, `LATENCY DOCTOR`
 - **File Browser** — walk the container filesystem from the main menu (any container, rooted at `/`)
   - Lists directories first then files, each with its size (`du -sb` for dirs, byte size for files)
   - Navigate with `↑↓`, `enter`/`→` to open a directory or view a file in the log viewer, `←`/`backspace` to go up, `esc` to leave

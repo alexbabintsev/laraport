@@ -37,6 +37,14 @@ type PushOutputMsg struct {
 // PushDockerCmdMsg navigates to the docker commands screen.
 type PushDockerCmdMsg struct{}
 
+// PushRedisCmdMsg navigates to the Redis commands screen.
+type PushRedisCmdMsg struct{}
+
+// RedisReadyMsg carries the resolved redis-cli prefix (with auth, if any).
+type RedisReadyMsg struct {
+	CLIPrefix string
+}
+
 // PushArtisanCmdMsg navigates to the artisan command input screen (autocomplete).
 type PushArtisanCmdMsg struct{}
 

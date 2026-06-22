@@ -15,6 +15,7 @@ type ContainerCaps struct {
 	IsMariaDB   bool // mysql client reports a MariaDB distribution
 	IsPercona   bool // mysql client reports a Percona distribution
 	HasSQLite   bool // sqlite3 binary present
+	HasRedis    bool // redis-cli binary present
 	HasPHP      bool // php binary present
 }
 
@@ -58,6 +59,7 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`command -v mysql >/dev/null 2>&1 && echo HAS_MYSQL; `+
 			`command -v mysql >/dev/null 2>&1 && { v=$(mysql --version 2>/dev/null); echo "$v" | grep -qi mariadb && echo IS_MARIADB; echo "$v" | grep -qi percona && echo IS_PERCONA; }; `+
 			`command -v sqlite3 >/dev/null 2>&1 && echo HAS_SQLITE; `+
+			`command -v redis-cli >/dev/null 2>&1 && echo HAS_REDIS; `+
 			`command -v php >/dev/null 2>&1 && echo HAS_PHP; `+
 			`true`,
 		root, root,
@@ -91,6 +93,8 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			caps.IsPercona = true
 		case "HAS_SQLITE":
 			caps.HasSQLite = true
+		case "HAS_REDIS":
+			caps.HasRedis = true
 		case "HAS_PHP":
 			caps.HasPHP = true
 		}
