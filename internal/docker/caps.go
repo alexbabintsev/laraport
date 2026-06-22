@@ -15,9 +15,13 @@ type ContainerCaps struct {
 	IsMariaDB   bool // mysql client reports a MariaDB distribution
 	IsPercona   bool // mysql client reports a Percona distribution
 	HasSQLite   bool // sqlite3 binary present
-	HasRedis    bool // redis-cli binary present
-	HasPHP      bool // php binary present
+	HasRedis    bool   // redis-cli binary present
+	MongoBin    string // "mongosh", "mongo", or "" — mongo shell binary present
+	HasPHP      bool   // php binary present
 }
+
+// HasMongo reports whether a mongo shell client is available.
+func (c ContainerCaps) HasMongo() bool { return c.MongoBin != "" }
 
 // HasDatabase reports whether any supported database engine is present.
 func (c ContainerCaps) HasDatabase() bool {
@@ -60,6 +64,7 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`command -v mysql >/dev/null 2>&1 && { v=$(mysql --version 2>/dev/null); echo "$v" | grep -qi mariadb && echo IS_MARIADB; echo "$v" | grep -qi percona && echo IS_PERCONA; }; `+
 			`command -v sqlite3 >/dev/null 2>&1 && echo HAS_SQLITE; `+
 			`command -v redis-cli >/dev/null 2>&1 && echo HAS_REDIS; `+
+			`if command -v mongosh >/dev/null 2>&1; then echo HAS_MONGOSH; elif command -v mongo >/dev/null 2>&1; then echo HAS_MONGO; fi; `+
 			`command -v php >/dev/null 2>&1 && echo HAS_PHP; `+
 			`true`,
 		root, root,
@@ -95,6 +100,10 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			caps.HasSQLite = true
 		case "HAS_REDIS":
 			caps.HasRedis = true
+		case "HAS_MONGOSH":
+			caps.MongoBin = "mongosh"
+		case "HAS_MONGO":
+			caps.MongoBin = "mongo"
 		case "HAS_PHP":
 			caps.HasPHP = true
 		}

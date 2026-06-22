@@ -21,6 +21,9 @@ All notable changes to laradok are documented here.
 - **Redis inspection** — new **Redis** menu item (shown when `redis-cli` is present)
   - Auto-detects the password from `REDIS_PASSWORD` / `REDIS_URL` and runs commands as `docker exec … redis-cli [-a …]`
   - Curated read-only commands: `INFO` sections, `DBSIZE`, `CLIENT LIST`, key sampling/counting via non-blocking `SCAN`, `SLOWLOG`, `CONFIG GET`, `PING`, `LASTSAVE`, `LATENCY DOCTOR`
+- **MongoDB inspection** — new **MongoDB** menu item (shown when `mongosh` or legacy `mongo` is present)
+  - Auto-detects root credentials from `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` / `MONGO_URL` / `MONGODB_URI` and runs `docker exec … <shell> --eval '<js>'`
+  - Curated commands: server/DB stats, `listDatabases`, collection names/counts/sizes, indexes, `ping`, `replSetGetStatus`, profiling status
 - **File Browser** — walk the container filesystem from the main menu (any container, rooted at `/`)
   - Lists directories first then files, each with its size (`du -sb` for dirs, byte size for files)
   - Navigate with `↑↓`, `enter`/`→` to open a directory or view a file in the log viewer, `←`/`backspace` to go up, `esc` to leave

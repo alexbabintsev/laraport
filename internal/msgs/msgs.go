@@ -45,6 +45,17 @@ type RedisReadyMsg struct {
 	CLIPrefix string
 }
 
+// PushMongoCmdMsg navigates to the MongoDB commands screen.
+type PushMongoCmdMsg struct {
+	MongoBin string // "mongosh" or "mongo"
+}
+
+// MongoReadyMsg carries detected MongoDB credentials (empty = unauthenticated).
+type MongoReadyMsg struct {
+	User     string
+	Password string
+}
+
 // PushArtisanCmdMsg navigates to the artisan command input screen (autocomplete).
 type PushArtisanCmdMsg struct{}
 

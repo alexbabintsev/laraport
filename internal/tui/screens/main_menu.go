@@ -31,6 +31,7 @@ type MainMenuScreen struct {
 	sp              spinner.Model
 	loading         bool
 	dbEngine        docker.DBEngine
+	mongoBin        string
 	width           int
 	height          int
 }
@@ -97,6 +98,11 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 		items = append(items, menuItem{"Redis", "Inspect Redis: INFO, keys, config, slowlog"})
 	}
 
+	// MongoDB
+	if caps.HasMongo() {
+		items = append(items, menuItem{"MongoDB", "Inspect MongoDB: stats, collections, indexes"})
+	}
+
 	// Laravel storage download
 	if caps.HasLaravel {
 		items = append(items, menuItem{"Download Storage", "Archive and download storage/ to ~/Downloads/"})
@@ -135,6 +141,7 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.ContainerCapsLoadedMsg:
 		s.loading = false
 		s.dbEngine = msg.Caps.DBEngine()
+		s.mongoBin = msg.Caps.MongoBin
 		s.list = buildMenuList(s.container, s.containerCfg, msg.Caps, s.width, s.height)
 		return s, nil
 
@@ -181,6 +188,9 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return s, func() tea.Msg { return msgs.PushDBScreenMsg{Engine: engine} }
 				case "Redis":
 					return s, func() tea.Msg { return msgs.PushRedisCmdMsg{} }
+				case "MongoDB":
+					mongoBin := s.mongoBin
+					return s, func() tea.Msg { return msgs.PushMongoCmdMsg{MongoBin: mongoBin} }
 				case "Download Storage":
 					return s, func() tea.Msg { return msgs.PushStorageDownloadMsg{} }
 				case "File Browser":

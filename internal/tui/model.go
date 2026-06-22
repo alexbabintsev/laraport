@@ -154,6 +154,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.stack[len(a.stack)-1] = updated
 		return a, cmd
 
+	case msgs.PushMongoCmdMsg:
+		screen := screens.NewMongoCmdScreen(a.container.Name, a.container.ID, msg.MongoBin, a.width, a.height)
+		return a, tea.Batch(a.push(screen), a.loadMongoCredsCmd())
+
+	case msgs.MongoReadyMsg:
+		updated, cmd := a.top().Update(msg)
+		a.stack[len(a.stack)-1] = updated
+		return a, cmd
+
 	case msgs.PushArtisanCmdMsg:
 		screen := screens.NewArtisanCmdScreen(a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.loadArtisanCommandsCmd())
@@ -572,6 +581,15 @@ func (a *App) loadRedisPrefixCmd() tea.Cmd {
 	return func() tea.Msg {
 		pass, _ := docker.DetectRedisPassword(a.runner, containerID)
 		return msgs.RedisReadyMsg{CLIPrefix: docker.RedisCLIPrefix(containerID, pass)}
+	}
+}
+
+// loadMongoCredsCmd detects MongoDB credentials from the active container env.
+func (a *App) loadMongoCredsCmd() tea.Cmd {
+	containerID := a.container.ID
+	return func() tea.Msg {
+		user, pass, _ := docker.DetectMongoCredentials(a.runner, containerID)
+		return msgs.MongoReadyMsg{User: user, Password: pass}
 	}
 }
 

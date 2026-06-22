@@ -20,6 +20,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **Docker commands** — inspect, restart, stats, top, diff, network info, and more
 - **Database management** — connect to any PostgreSQL, MySQL, MariaDB, Percona, or SQLite container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
 - **Redis inspection** — browse Redis `INFO`, key samples, config, and slowlog via curated `redis-cli` commands (auto-detects `REDIS_PASSWORD`)
+- **MongoDB inspection** — browse server/DB stats, collections, and indexes via curated `mongosh`/`mongo` commands (auto-detects root credentials)
 - **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laradok/sql_history.json`)
 
 ---
@@ -172,6 +173,7 @@ After selecting a container, the main menu offers:
 | **Server Logs** | Tail nginx, php-fpm, supervisor logs | always |
 | **Database** | PostgreSQL / MySQL / MariaDB / Percona / SQLite management (see below) | `psql`, `mysql`, or `sqlite3` found |
 | **Redis** | Inspect Redis via curated `redis-cli` commands (see below) | `redis-cli` found |
+| **MongoDB** | Inspect MongoDB via curated `mongosh`/`mongo` commands (see below) | `mongosh` or `mongo` found |
 | **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` file found |
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
@@ -274,6 +276,21 @@ The screen offers curated, read-only commands grouped by purpose:
 - **Maintenance** — `PING`, `LASTSAVE`, `LATENCY DOCTOR`
 
 Key listing uses `redis-cli --scan` (non-blocking) rather than `KEYS *`, so it is safe to run against production instances.
+
+---
+
+## MongoDB
+
+Select a container with the `mongosh` (preferred) or legacy `mongo` shell, then choose **MongoDB** from the main menu. laradok auto-detects root credentials from `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` (or the credentials in `MONGO_URL` / `MONGODB_URI`) and runs each command as `docker exec <container> mongosh [-u … -p … --authenticationDatabase admin] --quiet --eval '<js>'`.
+
+Commands are curated JavaScript expressions grouped by purpose:
+
+- **Info & Stats** — `db.version()`, server status, `listDatabases`, current DB `db.stats()`, in-progress operation count
+- **Collections** — list collections, document counts, and data sizes per collection
+- **Indexes** — list indexes for every collection
+- **Maintenance** — `ping`, `replSetGetStatus`, profiling status
+
+When no `MONGO_INITDB_ROOT_*` variables are present, commands run without authentication (suitable for local, unsecured instances).
 
 ---
 
