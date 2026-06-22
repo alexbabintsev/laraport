@@ -7,6 +7,7 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Container Info screen** — new **Info** entry in the container menu showing parsed `docker inspect` data: name, ID, image, status, networks/IP, mounts (source → destination), and labels — in a scrollable, sectioned view
 - **Global Docker cleanup** — press `g` in the container list to open server-level Docker commands not tied to a container
   - Disk usage (`docker system df`, verbose) and prune commands for stopped containers, images, volumes, networks, build cache, and full `system prune`
   - Destructive commands require a `y`/`n` confirmation screen showing the exact command; cleanup entries are highlighted in red

@@ -37,6 +37,15 @@ type PushOutputMsg struct {
 // PushDockerCmdMsg navigates to the docker commands screen.
 type PushDockerCmdMsg struct{}
 
+// PushInfoMsg navigates to the container info (docker inspect) screen.
+type PushInfoMsg struct{}
+
+// ContainerInfoLoadedMsg carries parsed `docker inspect` data for the info screen.
+type ContainerInfoLoadedMsg struct {
+	Info docker.ContainerInfo
+	Err  error
+}
+
 // PushGlobalCmdMsg navigates to the global (server-level) docker commands screen.
 type PushGlobalCmdMsg struct{}
 

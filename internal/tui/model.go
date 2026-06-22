@@ -141,6 +141,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.outputCh = ch
 		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
 
+	case msgs.PushInfoMsg:
+		screen := screens.NewInfoScreen(a.container.Name, a.width, a.height)
+		return a, tea.Batch(a.push(screen), a.loadInfoCmd())
+
+	case msgs.ContainerInfoLoadedMsg:
+		updated, cmd := a.top().Update(msg)
+		a.stack[len(a.stack)-1] = updated
+		return a, cmd
+
 	case msgs.PushDockerCmdMsg:
 		screen := screens.NewDockerCmdScreen(a.container.Name, a.width, a.height)
 		return a, a.push(screen)
@@ -595,6 +604,16 @@ func (a *App) loadRedisPrefixCmd() tea.Cmd {
 	return func() tea.Msg {
 		pass, _ := docker.DetectRedisPassword(a.runner, containerID)
 		return msgs.RedisReadyMsg{CLIPrefix: docker.RedisCLIPrefix(containerID, pass)}
+	}
+}
+
+// loadInfoCmd runs docker inspect on the active container for the Info screen.
+func (a *App) loadInfoCmd() tea.Cmd {
+	runner := a.runner
+	containerID := a.container.ID
+	return func() tea.Msg {
+		info, err := docker.InspectContainer(runner, containerID)
+		return msgs.ContainerInfoLoadedMsg{Info: info, Err: err}
 	}
 }
 

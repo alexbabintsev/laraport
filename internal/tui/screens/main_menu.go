@@ -56,6 +56,7 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 	var items []list.Item
 
 	// Always shown
+	items = append(items, menuItem{"Info", "Image, status, network, mounts, and labels"})
 	if len(ccfg.Commands) > 0 {
 		items = append(items, menuItem{"Commands", "Browse command groups from config"})
 	}
@@ -164,6 +165,8 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if item, ok := s.list.SelectedItem().(menuItem); ok {
 				switch item.title {
+				case "Info":
+					return s, func() tea.Msg { return msgs.PushInfoMsg{} }
 				case "Commands":
 					groups := s.containerGroups
 					return s, func() tea.Msg { return msgs.PushCommandsMsg{ContainerGroups: groups} }
