@@ -123,7 +123,7 @@ servers:
 | `display_name` | string | Custom label shown in the container list |
 | `favorite` | bool | Pin to top of list with a star indicator |
 | `hidden` | bool | Hide from container list entirely |
-| `root_path` | string | Path to Laravel root inside container (default: `/var/www/html`) |
+| `root_path` | string | Path to Laravel root inside container (auto-detected from `/var/www/html` or `/app`; set to override) |
 | `custom_logs` | []string | Extra log file paths shown in Server Logs |
 | `commands` | []CommandGroup | Per-container command groups (appear before global commands) |
 
@@ -167,18 +167,18 @@ After selecting a container, the main menu offers:
 | **Stats** | Live CPU / memory / network / disk graphs plus a top-processes table (`c`/`m` to sort) | always |
 | **Terminal** | Open an interactive shell (`bash`, falling back to `sh`) inside the container | always |
 | **Commands** | Browse configured command groups | container has custom commands in config |
-| **Artisan Commands** | Full `php artisan` list with autocomplete | `artisan` file found |
+| **Artisan Commands** | Full `php artisan` list with autocomplete | `artisan` found (in root or `/app`) |
 | **Composer Commands** | Browse and run composer scripts | `composer` or `php` found |
 | **Npm Commands** | Browse and run npm scripts | `npm` found |
 | **Docker Commands** | Container management (inspect, restart, stats…) | always |
 | **Custom Command** | Interactive shell with live stdin | always |
-| **Laravel Logs** | Browse and tail `storage/logs/*.log` files | `artisan` file found |
+| **Laravel Logs** | Browse and tail `storage/logs/*.log` files | `artisan` found (in root or `/app`) |
 | **Docker Logs** | Stream container stdout/stderr | always |
 | **Server Logs** | Tail nginx, php-fpm, supervisor logs | always |
 | **Database** | PostgreSQL / MySQL / MariaDB / Percona / SQLite management (see below) | `psql`, `mysql`, or `sqlite3` found |
 | **Redis** | Inspect Redis via curated `redis-cli` commands (see below) | `redis-cli` found |
 | **MongoDB** | Inspect MongoDB via curated `mongosh`/`mongo` commands (see below) | `mongosh` or `mongo` found |
-| **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` file found |
+| **Download Storage** | Archive and download `storage/` to `~/Downloads/` | `artisan` found (in root or `/app`) |
 | **File Browser** | Walk the container filesystem, view sizes, download any file or folder as `.tar.gz` | always |
 
 Menu items are detected automatically with a single `docker exec` probe when the container is opened. A spinner is shown during detection.

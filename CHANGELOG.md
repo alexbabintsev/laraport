@@ -54,6 +54,7 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- **Laravel detection** — the capability probe now also looks for `artisan` (and `composer.phar`) in `/app`, not just the configured root / `/var/www/html`. When `artisan` is found at `/app` and no `root_path` is set in config, laradok adopts that root so artisan, logs and storage commands target the right directory.
 - **Download progress** — archive downloads (File Browser + Download Storage) now show a single `received N MB` counter that updates in place instead of flooding the output with one line per chunk
 - **PostgreSQL management** — full database browser accessible from the main menu
   - Auto-detects `POSTGRES_USER` / `POSTGRES_PASSWORD` from container environment

@@ -108,6 +108,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(a.push(screen), a.loadCapsCmd())
 
 	case msgs.ContainerCapsLoadedMsg:
+		// If the config didn't pin a root_path, adopt the root where artisan was
+		// actually found (e.g. /app) so artisan/logs/storage target the right dir.
+		if a.containerCfg.RootPath == "" && msg.Caps.LaravelRoot != "" {
+			a.containerCfg.RootPath = msg.Caps.LaravelRoot
+		}
 		updated, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = updated
 		return a, cmd

@@ -18,6 +18,11 @@ type ContainerCaps struct {
 	HasRedis    bool   // redis-cli binary present
 	MongoBin    string // "mongosh", "mongo", or "" — mongo shell binary present
 	HasPHP      bool   // php binary present
+
+	// LaravelRoot is the directory where artisan was actually found (the
+	// configured root or /app). Empty when HasLaravel is false. Callers use it
+	// to run artisan/logs/storage against the right path.
+	LaravelRoot string
 }
 
 // HasMongo reports whether a mongo shell client is available.
@@ -54,10 +59,12 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 		root = strings.TrimRight(rootPath, "/")
 	}
 
-	// Each check emits a tag if the binary/file exists.
+	// Each check emits a tag if the binary/file exists. The Laravel/Composer
+	// file checks try the configured root and /app, a common alternate root
+	// (FrankenPHP/Octane images, some Sail setups).
 	script := fmt.Sprintf(
-		`[ -f %s/artisan ] && echo HAS_LARAVEL; `+
-			`(command -v composer >/dev/null 2>&1 || [ -f %s/composer.phar ]) && echo HAS_COMPOSER; `+
+		`if [ -f %s/artisan ]; then echo LARAVEL_ROOT=%s; elif [ -f /app/artisan ]; then echo LARAVEL_ROOT=/app; fi; `+
+			`(command -v composer >/dev/null 2>&1 || [ -f %s/composer.phar ] || [ -f /app/composer.phar ]) && echo HAS_COMPOSER; `+
 			`command -v npm >/dev/null 2>&1 && echo HAS_NPM; `+
 			`command -v psql >/dev/null 2>&1 && echo HAS_POSTGRES; `+
 			`command -v mysql >/dev/null 2>&1 && echo HAS_MYSQL; `+
@@ -67,7 +74,7 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`if command -v mongosh >/dev/null 2>&1; then echo HAS_MONGOSH; elif command -v mongo >/dev/null 2>&1; then echo HAS_MONGO; fi; `+
 			`command -v php >/dev/null 2>&1 && echo HAS_PHP; `+
 			`true`,
-		root, root,
+		root, root, root,
 	)
 	cmd := fmt.Sprintf(`docker exec %s sh -c %s`, containerID, shellQuote(script))
 
@@ -81,9 +88,13 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 
 	caps := ContainerCaps{}
 	for _, line := range strings.Split(out, "\n") {
-		switch strings.TrimSpace(line) {
-		case "HAS_LARAVEL":
+		line = strings.TrimSpace(line)
+		if r, ok := strings.CutPrefix(line, "LARAVEL_ROOT="); ok {
 			caps.HasLaravel = true
+			caps.LaravelRoot = r
+			continue
+		}
+		switch line {
 		case "HAS_COMPOSER":
 			caps.HasComposer = true
 		case "HAS_NPM":
