@@ -7,6 +7,9 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Edit container config from the UI** — press `e` on a container in the list to open a form for its display name, root path, favorite and hidden flags
+  - Saves back to `config.yaml` (`Config.Save`), creating an exact-name entry that takes precedence over any glob rule
+  - The list refreshes immediately; `~` in SSH key paths is preserved on write
 - **Redis & MongoDB backups** — the Redis and MongoDB inspection screens gained a **Backup** action
   - Redis: **Download RDB snapshot** via `redis-cli --rdb` → `~/Downloads/redis_<timestamp>.rdb`
   - MongoDB: **Download dump** via `mongodump --archive --gzip` → `~/Downloads/mongo_<timestamp>.archive.gz`

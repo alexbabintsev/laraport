@@ -14,6 +14,7 @@ import (
 // App is the root Bubble Tea model. It manages a stack of screens.
 type App struct {
 	cfg            *config.Config
+	cfgPath        string
 	stack          []tea.Model
 	width          int
 	height         int
@@ -30,8 +31,9 @@ type App struct {
 }
 
 // NewApp creates the root App model starting on the server list screen.
-func NewApp(cfg *config.Config) *App {
-	app := &App{cfg: cfg}
+// cfgPath is where container-config edits are written back.
+func NewApp(cfg *config.Config, cfgPath string) *App {
+	app := &App{cfg: cfg, cfgPath: cfgPath}
 	return app
 }
 
@@ -106,6 +108,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.containerCfg, _ = a.activeServer.FindContainerConfig(msg.Container.Name)
 		screen := screens.NewMainMenuScreen(msg.Container, a.containerCfg, a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.loadCapsCmd())
+
+	case msgs.PushContainerEditMsg:
+		screen := screens.NewContainerEditScreen(msg.ContainerName, msg.Config, a.width, a.height)
+		return a, a.push(screen)
+
+	case msgs.SaveContainerConfigMsg:
+		err := a.saveContainerConfig(msg.Config)
+		// Forward the result to the edit screen for its status line.
+		updated, cmd := a.top().Update(msgs.ContainerConfigSavedMsg{Err: err})
+		a.stack[len(a.stack)-1] = updated
+		cmds := []tea.Cmd{cmd}
+		// Refresh the underlying container list so the change shows immediately.
+		if err == nil {
+			for i := range a.stack {
+				if cl, ok := a.stack[i].(*screens.ContainerListScreen); ok {
+					cmds = append(cmds, cl.UpdateServer(a.activeServer))
+				}
+			}
+		}
+		return a, tea.Batch(cmds...)
 
 	case msgs.ContainerCapsLoadedMsg:
 		// If the config didn't pin a root_path, adopt the root where artisan was
@@ -657,6 +679,25 @@ func (a *App) loadNpmCommandsCmd() tea.Cmd {
 		cmds, err := docker.ListNpmCommands(a.runner, a.container.ID, a.containerCfg.RootPath)
 		return msgs.NpmCommandsLoadedMsg{Commands: cmds, Err: err}
 	}
+}
+
+// saveContainerConfig upserts per-container overrides into the in-memory config,
+// writes the file, and refreshes the active-server snapshot so the change is
+// reflected immediately in the list and menus.
+func (a *App) saveContainerConfig(cc config.ContainerConfig) error {
+	if !a.cfg.UpsertContainerConfig(a.activeServer.Name, cc) {
+		return fmt.Errorf("server %q not found in config", a.activeServer.Name)
+	}
+	if err := a.cfg.Save(a.cfgPath); err != nil {
+		return err
+	}
+	for _, s := range a.cfg.Servers {
+		if s.Name == a.activeServer.Name {
+			a.activeServer = s
+			break
+		}
+	}
+	return nil
 }
 
 // loadCapsCmd detects container capabilities (artisan, composer, npm, psql, php) asynchronously.

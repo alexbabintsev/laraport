@@ -10,7 +10,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 ## Features
 
 - **Multi-server support** — connect to any number of SSH servers or use your local Docker socket
-- **Container browser** — lists all Docker containers (running and stopped) with favorites, custom display names, filtering, and per-container status, published ports, and live CPU/memory usage
+- **Container browser** — lists all Docker containers (running and stopped) with favorites, custom display names, filtering, and per-container status, published ports, and live CPU/memory usage; press `e` to edit a container's config (display name, root path, favorite, hidden) and write it back to `config.yaml`
 - **Artisan commands** — full autocomplete list of all `php artisan` commands with descriptions
 - **Composer commands** — browse and run composer scripts; auto-downloads `composer.phar` if not installed
 - **npm scripts** — browse and run scripts from `package.json`
@@ -116,6 +116,8 @@ servers:
 ```
 
 ### Container config options
+
+`display_name`, `root_path`, `favorite` and `hidden` can also be edited from the UI — press `e` on a container in the list. Edits are written back here as an exact-name entry.
 
 | Field | Type | Description |
 |---|---|---|

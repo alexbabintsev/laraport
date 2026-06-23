@@ -143,6 +143,14 @@ func NewContainerListScreen(server config.Server, runner docker.Runner, width, h
 	}
 }
 
+// UpdateServer replaces the cached server config (after an edit) and rebuilds
+// the list so new display names / favorites take effect immediately.
+func (s *ContainerListScreen) UpdateServer(server config.Server) tea.Cmd {
+	s.server = server
+	s.containerConfigs = server.Containers
+	return s.rebuildItems()
+}
+
 func (s *ContainerListScreen) Init() tea.Cmd {
 	if s.connecting {
 		// runner not yet available — just spin, wait for ServerConnectedMsg
@@ -273,6 +281,18 @@ func (s *ContainerListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return s, nil // not connected yet
 			}
 			return s, func() tea.Msg { return msgs.PushGlobalCmdMsg{} }
+		case "e":
+			if s.loading || s.err != nil {
+				return s, nil
+			}
+			if item, ok := s.list.SelectedItem().(containerItem); ok {
+				name := item.container.Name
+				cc, _ := s.server.FindContainerConfig(name)
+				cc.Name = name // edits target an exact-name entry
+				return s, func() tea.Msg {
+					return msgs.PushContainerEditMsg{ContainerName: name, Config: cc}
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -330,7 +350,8 @@ func (s *ContainerListScreen) helpBar() string {
 	return styles.StatusBar.Width(s.width).Render(
 		styles.StatusBarKey.Render("↑↓") + " navigate  " +
 			styles.StatusBarKey.Render("enter") + " select  " +
-			styles.StatusBarKey.Render("g") + " cleanup  " +
+			styles.StatusBarKey.Render("e") + " configure  " +
+				styles.StatusBarKey.Render("g") + " cleanup  " +
 				styles.StatusBarKey.Render("r") + " refresh  " +
 			styles.StatusBarKey.Render("esc") + " back",
 	)

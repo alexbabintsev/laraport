@@ -324,6 +324,22 @@ type ContainersLoadedMsg struct {
 	Err        error
 }
 
+// PushContainerEditMsg opens the per-container config editor for a container.
+type PushContainerEditMsg struct {
+	ContainerName string
+	Config        config.ContainerConfig
+}
+
+// SaveContainerConfigMsg requests writing the edited container config to disk.
+type SaveContainerConfigMsg struct {
+	Config config.ContainerConfig
+}
+
+// ContainerConfigSavedMsg reports the result of writing the config.
+type ContainerConfigSavedMsg struct {
+	Err error
+}
+
 // ContainerStatsLoadedMsg carries live resource stats for all containers,
 // loaded lazily after the container list is shown. Keyed by name and short ID.
 type ContainerStatsLoadedMsg struct {

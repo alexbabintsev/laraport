@@ -46,7 +46,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := tui.NewApp(cfg)
+	app := tui.NewApp(cfg, cfgPath)
 
 	p := tea.NewProgram(
 		app,
