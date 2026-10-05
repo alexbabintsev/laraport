@@ -57,6 +57,9 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- Saving the config no longer writes the implicit "Local" server (added when the config defines none) unless it gained container settings; a symlinked `config.yaml` (dotfiles) keeps its link
+- `~user/…` key paths are no longer mangled (only `~` / `~/…` are expanded)
+- Removed the unused `internal/dbg` package
 - **Commands run in the app root** — custom commands (config `commands:`) and the Artisan/Composer/Npm pickers now `cd` into the container's app root (configured or detected) before running, falling back to the image `WORKDIR` when it does not exist
 - **Log file list in one round-trip** — size, timestamps and line counts are gathered by a single in-container script instead of two
 - **Faster container list** — `docker ps` is no longer always run twice; it is retried only when the output looks truncated. Fields are emitted with `{{json …}}`, so names/statuses containing quotes no longer drop the container
@@ -82,11 +85,30 @@ All notable changes to laradok are documented here.
 - **Download Storage** — new main menu item archives `storage/` inside the container via `tar | gzip | base64 -w 76`, shows directory size before transfer, saves to `~/Downloads/<container>_storage_<timestamp>.tar.gz`; no temporary files created on the server
 
 ### Fixed
+- **Incomplete / corrupted output from remote servers** (container list missing entries, partial database lists, stray NUL bytes) — the SSH runner wrote stdout and stderr into one unsynchronised `bytes.Buffer` from two goroutines; whenever the remote side printed anything on stderr (shell rc files, CLI warnings) the buffer was corrupted. Output is now collected safely, and parsed commands read stdout only, so stderr noise cannot leak into lists. The retry-on-empty / NUL-stripping workarounds are gone
+- **Dropped SSH connections are re-established** — after a network change, sleep or server restart the next action reconnects transparently instead of failing until the app is restarted. Dead connections are detected via keepalives (every 30 s) and a 10 s limit on opening a session; connecting and the SSH handshake time out after 15 s
+- **UI freeze after leaving running commands** — output streams were started synchronously inside the UI loop and their stop function was discarded, so leaving an artisan/SQL/dump screen early leaked an SSH session slot; after six such exits the whole UI hung. Every stream now starts in the background and is stopped when its screen closes, and waiting for a session slot times out after 30 s
+- **Leaving a screen now stops the command on the server** — cancelled streams (tail, `docker logs`, artisan, SQL, dumps) run as a background job inside the container that is killed when laradok closes stdin; previously closing a remote `docker exec` left e.g. `queue:work` or `tail -f` running in the container
+- **Log tail no longer drops lines** appended between counting the file and starting to follow it (`tail -n +<N+1> -f`)
+- **Storage download failed on live Laravel apps** — tar's "file changed as we read it" went into the data stream and broke decoding; it is now reported as a warning and the archive is kept
+- **Large downloads no longer load into memory** — dumps and archives were collected as base64 text, then decoded (≈4× the file size in RAM). They now stream raw bytes straight to a private temp file that is renamed into place only on success; failed or cancelled downloads leave nothing behind, and existing files are never overwritten
+- **Dump failures are reported** — `pg_dump | gzip` reported gzip's (successful) exit status, so a failed dump could be saved as a valid-looking empty file; the producer's status is now propagated
+- **MariaDB 11+ containers** (which ship only `mariadb` / `mariadb-dump`) are detected and fully supported; `MARIADB_*` credential variables are honoured
+- PostgreSQL database list is read from `pg_database` (one name per line) instead of parsing `psql -l`, so names containing `|` or spaces are listed correctly
+- Credentials embedded in `REDIS_URL` / `MONGO_URL` / `MONGODB_URI` are percent-decoded; multi-host Mongo URIs are supported
+- The capability probe reports errors (e.g. stopped container) in the menu instead of silently showing an empty menu
+- Background loaders no longer read the active container from a goroutine, so switching containers quickly can't send a command to the wrong one
+- Switching servers closes the previous SSH connection (it previously leaked); a connection that finishes after you left the screen is closed
+- Local commands run in their own process group, so stopping a stream kills the whole pipeline
 - Shell quoting bug in all psql/pg_dump commands: replaced `sh -c "PGPASSWORD='...' psql ..."` (broken double-quote nesting) with `docker exec -e PGPASSWORD=...` to inject credentials as environment variables — no shell interpolation of user-controlled values
 - `ListDatabases` parsing: `psql -lqt` ACL entries (e.g. `postgres=CTc/postgres`) were incorrectly parsed as database names; now requires `len(parts) >= 2` and rejects names containing `=` or `/`
 - `base64 -w 0` replaced with `base64 -w 76` in storage and pg_dump pipelines — `bufio.Scanner` has a 64 KB token limit and silently dropped single-line base64 output from large archives, causing "no data received" errors
 
 ### Security
+- **SSH host keys are verified** against `~/.ssh/known_hosts` with `accept-new` semantics — unknown hosts are recorded on first use, changed keys are rejected. Previously a missing `known_hosts` file silently disabled verification (`InsecureIgnoreHostKey`)
+- **Passwords no longer appear in process listings** — PostgreSQL, MySQL and Redis passwords were passed as `docker exec -e PGPASSWORD=…` / `-a …` arguments, readable by any user on the host via `ps`. They are now written to the command's stdin and exported inside the container only; `mongosh` authenticates from the environment and `mongodump` uses a private `--config` file
+- Downloaded dumps/archives are created with mode `0600`; `config.yaml` (which may hold key passphrases) and the SQL history are written atomically with mode `0600`
+- Redis RDB snapshots use a private `mktemp` file instead of a fixed `/tmp` path
 - **Host command injection via container-controlled names** — log file paths, files picked in the file browser, SQLite paths, DB/user names and `root_path` were interpolated into `docker exec … sh -c "…"` without quoting, so a file named e.g. `x$(cmd).log` inside a container ran `cmd` on the host (or the SSH server) when the log list was opened. Every in-container script is now built by `docker.ExecShCmd`, which single-quotes both the container ID and the script, and every embedded value is quoted individually
 - **Raw / custom / config commands ran `$…` on the host** — they were wrapped with Go's `%q`, which does not escape `$` or backticks, so `echo $HOME` or `$(…)` expanded on the host. They now run verbatim in the container's shell
 - Artisan arguments are passed to the container's shell instead of the host shell (pipes and `;` now apply inside the container)

@@ -215,7 +215,7 @@ func (s *MongoCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			hostCmd := docker.MongoEvalCmd(s.containerID, s.mongoBin, s.user, s.password, "", mc.js)
 			title := "mongo: " + mc.label
 			return s, func() tea.Msg {
-				return msgs.PushOutputMsg{Title: title, HostCmd: hostCmd}
+				return msgs.PushOutputMsg{Title: title, Host: hostCmd}
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -292,9 +292,9 @@ func (s *MongoCmdScreen) View() string {
 
 	body := strings.Join(lines, "\n")
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

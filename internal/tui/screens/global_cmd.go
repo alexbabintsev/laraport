@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alexbabintsev/laradok/internal/docker"
 	"github.com/alexbabintsev/laradok/internal/msgs"
 	"github.com/alexbabintsev/laradok/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
@@ -153,7 +154,7 @@ func (s *GlobalCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return s, nil
 			}
 			gc := s.cmds[s.selected]
-			run := msgs.PushOutputMsg{Title: gc.label, HostCmd: gc.cmd}
+			run := msgs.PushOutputMsg{Title: gc.label, Host: docker.HostCommand{Cmd: gc.cmd}}
 			if gc.confirm {
 				return s, func() tea.Msg {
 					return msgs.PushConfirmMsg{
@@ -235,9 +236,9 @@ func (s *GlobalCmdScreen) View() string {
 
 	body := strings.Join(lines, "\n")
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

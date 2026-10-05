@@ -70,8 +70,8 @@ func (s *ConfirmScreen) View() string {
 	)
 
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("y")+" confirm  "+
-			styles.StatusBarKey.Render("n")+" cancel",
+		styles.StatusBarKey.Render("y") + " confirm  " +
+			styles.StatusBarKey.Render("n") + " cancel",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

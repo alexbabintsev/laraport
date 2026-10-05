@@ -30,8 +30,8 @@ type PushCommandsMsg struct {
 type PushOutputMsg struct {
 	Title      string
 	ArtisanCmd string
-	RawCmd     string  // executed inside the container via docker exec
-	HostCmd    string  // executed directly on the host (for docker inspect, restart, etc.)
+	RawCmd     string             // executed inside the container (in the app root) via docker exec
+	Host       docker.HostCommand // executed directly on the host (docker inspect, SQL clients, …)
 }
 
 // PushDockerCmdMsg navigates to the docker commands screen.
@@ -94,9 +94,10 @@ type ConfirmedMsg struct {
 // PushRedisCmdMsg navigates to the Redis commands screen.
 type PushRedisCmdMsg struct{}
 
-// RedisReadyMsg carries the resolved redis-cli prefix (with auth, if any).
+// RedisReadyMsg carries the detected Redis password (empty = no auth).
 type RedisReadyMsg struct {
-	CLIPrefix string
+	ContainerID string
+	Password    string
 }
 
 // PushRedisDumpMsg triggers an RDB snapshot download for the active container.
@@ -144,9 +145,9 @@ type PushServerLogPickerMsg struct{}
 
 // PushLogTailMsg navigates to the log tail screen.
 type PushLogTailMsg struct {
-	LogType    string // "docker" = container stdout; "host" = host file; empty = file inside container
-	FilePath   string // path to tail (inside container or on host)
-	Title      string // display title
+	LogType  string // "docker" = container stdout; "host" = host file; empty = file inside container
+	FilePath string // path to tail (inside container or on host)
+	Title    string // display title
 }
 
 // LogFilesLoadedMsg carries the result of listing log files in the container.
@@ -215,6 +216,18 @@ type OutputDoneMsg struct {
 	SessionID uint64
 }
 
+// StreamStartedMsg reports that an output stream (command output, log tail,
+// download) started for session SessionID — or failed to start.
+type StreamStartedMsg struct {
+	SessionID uint64
+	Ch        <-chan string
+	Stop      func()
+	Err       error
+	// Log tails of a file: position info for lazy loading of earlier lines.
+	TotalLines int
+	TopLine    int
+}
+
 // RawCmdStartMsg signals that an interactive command has started.
 type RawCmdStartMsg struct {
 	OutCh     <-chan string
@@ -227,6 +240,7 @@ type RawCmdStartMsg struct {
 // ContainerCapsLoadedMsg carries the detected capabilities of the active container.
 type ContainerCapsLoadedMsg struct {
 	Caps docker.ContainerCaps
+	Err  error
 }
 
 // PushDBScreenMsg navigates to the database list screen for the active container.
@@ -349,7 +363,8 @@ type ContainerStatsLoadedMsg struct {
 
 // ServerConnectedMsg is returned after an async SSH (or local) connection attempt.
 type ServerConnectedMsg struct {
-	Server config.Server
-	Runner docker.Runner
-	Err    error
+	Server  config.Server
+	Runner  docker.Runner
+	Err     error
+	Attempt uint64 // matches App.connectAttempt for the current attempt
 }

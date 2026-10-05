@@ -14,7 +14,7 @@ import (
 type dbAction struct {
 	label string
 	desc  string
-	// sqlQuery is non-empty for direct SQL execution via HostCmd.
+	// sqlQuery is non-empty for direct SQL execution on the host.
 	// If empty, the action is handled specially (download or SQL input).
 	sqlQuery string
 	// special action key
@@ -315,11 +315,10 @@ func (s *DBActionsScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return msgs.PushDBDownloadMsg{DBName: dbName, User: user, Password: pass, Engine: engine, CustomFormat: true, Inserts: false}
 				}
 			default:
-				// Direct SQL via HostCmd — use docker exec -e to avoid shell quoting issues.
 				hostCmd := docker.DBExecHostCmd(engine, s.containerID, user, pass, dbName, a.sqlQuery)
 				title := a.label + " — " + dbName
 				return s, func() tea.Msg {
-					return msgs.PushOutputMsg{Title: title, HostCmd: hostCmd}
+					return msgs.PushOutputMsg{Title: title, Host: hostCmd}
 				}
 			}
 		}
@@ -387,9 +386,9 @@ func (s *DBActionsScreen) View() string {
 
 	body := strings.Join(lines, "\n")
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

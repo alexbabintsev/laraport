@@ -26,14 +26,11 @@ type ContainerStat struct {
 // docker stats is slower than docker ps (it samples metrics), so callers should
 // run this lazily/in the background after the container list is already shown.
 func ListContainerStats(r Runner) (map[string]ContainerStat, error) {
-	format := `{"id":"{{.ID}}","name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemUsage}}","memperc":"{{.MemPerc}}","net":"{{.NetIO}}","block":"{{.BlockIO}}","pids":"{{.PIDs}}"}`
-	cmd := fmt.Sprintf(`docker stats --no-stream --format '%s'`, format)
-
-	out, err := r.RunCommand(cmd)
+	format := `{"id":{{json .ID}},"name":{{json .Name}},"cpu":{{json .CPUPerc}},"mem":{{json .MemUsage}},"memperc":{{json .MemPerc}},"net":{{json .NetIO}},"block":{{json .BlockIO}},"pids":{{json .PIDs}}}`
+	out, err := r.RunOutput("docker stats --no-stream --format "+shellQuote(format), "")
 	if err != nil {
-		return nil, fmt.Errorf("docker stats: %w\n%s", err, out)
+		return nil, fmt.Errorf("docker stats: %w", err)
 	}
-	out = stripNUL(out)
 
 	result := make(map[string]ContainerStat)
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

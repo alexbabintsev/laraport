@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alexbabintsev/laradok/internal/docker"
 	"github.com/alexbabintsev/laradok/internal/msgs"
 	"github.com/alexbabintsev/laradok/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -87,7 +88,8 @@ type redisRow struct {
 // RedisCmdScreen shows curated redis-cli commands for the active container.
 type RedisCmdScreen struct {
 	containerName string
-	cliPrefix     string // resolved `docker exec ... redis-cli [-a pass]`
+	containerID   string // set once the password has been detected
+	password      string // Redis password (empty = no auth)
 	rows          []redisRow
 	cmds          []redisCommand
 	selected      int
@@ -163,7 +165,8 @@ func (s *RedisCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgs.RedisReadyMsg:
 		s.loading = false
-		s.cliPrefix = msg.CLIPrefix
+		s.containerID = msg.ContainerID
+		s.password = msg.Password
 		return s, nil
 
 	case spinner.TickMsg:
@@ -210,10 +213,10 @@ func (s *RedisCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return s, func() tea.Msg { return msgs.PushRedisDumpMsg{} }
 			}
 			// Pipe-based commands (--scan | head) need a shell; others run direct.
-			hostCmd := s.cliPrefix + " " + rc.args
+			hostCmd := docker.RedisCmd(s.containerID, s.password, rc.args)
 			title := "redis: " + rc.label
 			return s, func() tea.Msg {
-				return msgs.PushOutputMsg{Title: title, HostCmd: hostCmd}
+				return msgs.PushOutputMsg{Title: title, Host: hostCmd}
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -290,9 +293,9 @@ func (s *RedisCmdScreen) View() string {
 
 	body := strings.Join(lines, "\n")
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

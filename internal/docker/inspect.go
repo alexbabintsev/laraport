@@ -70,12 +70,10 @@ type rawInspect struct {
 
 // InspectContainer runs `docker inspect` and returns the parsed info subset.
 func InspectContainer(r Runner, containerID string) (ContainerInfo, error) {
-	cmd := fmt.Sprintf(`docker inspect %s`, shellQuote(containerID))
-	out, err := r.RunCommand(cmd)
+	out, err := r.RunOutput("docker inspect "+shellQuote(containerID), "")
 	if err != nil {
-		return ContainerInfo{}, fmt.Errorf("docker inspect: %w\n%s", err, out)
+		return ContainerInfo{}, fmt.Errorf("docker inspect: %w", err)
 	}
-	out = stripNUL(out)
 
 	var raws []rawInspect
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &raws); err != nil {

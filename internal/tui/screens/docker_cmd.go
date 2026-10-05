@@ -170,8 +170,8 @@ func (s *DockerCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				title := dc.label
 				return s, func() tea.Msg {
 					return msgs.PushOutputMsg{
-						Title:   title,
-						HostCmd: hostCmd,
+						Title: title,
+						Host:  docker.HostCommand{Cmd: hostCmd},
 					}
 				}
 			}
@@ -187,9 +187,9 @@ func (s *DockerCmdScreen) View() string {
 	title := styles.TitleBar.Render("Docker Commands — " + s.containerName)
 
 	groupStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F1C40F")).Bold(true)
-	cmdStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
-	descStyle  := lipgloss.NewStyle().Foreground(styles.ColorText)
-	selStyle   := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
+	cmdStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
+	descStyle := lipgloss.NewStyle().Foreground(styles.ColorText)
+	selStyle := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
 
 	labelWidth := 0
 	for _, c := range s.cmds {
@@ -241,9 +241,9 @@ func (s *DockerCmdScreen) View() string {
 
 	body := strings.Join(lines, "\n")
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

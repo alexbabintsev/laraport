@@ -19,18 +19,20 @@ type LiveSample struct {
 
 // SampleContainerStats fetches a one-shot stats reading for a single container.
 func SampleContainerStats(r Runner, containerID string) (LiveSample, error) {
-	format := `{"cpu":"{{.CPUPerc}}","mem":"{{.MemUsage}}","net":"{{.NetIO}}","block":"{{.BlockIO}}"}`
-	cmd := fmt.Sprintf(`docker stats --no-stream --format '%s' %s`, format, shellQuote(containerID))
+	format := `{"cpu":{{json .CPUPerc}},"mem":{{json .MemUsage}},"net":{{json .NetIO}},"block":{{json .BlockIO}}}`
+	cmd := "docker stats --no-stream --format " + shellQuote(format) + " " + shellQuote(containerID)
 
-	out, err := r.RunCommand(cmd)
+	out, err := r.RunOutput(cmd, "")
 	if err != nil {
-		return LiveSample{}, fmt.Errorf("docker stats: %w\n%s", err, out)
+		return LiveSample{}, fmt.Errorf("docker stats: %w", err)
 	}
-	out = stripNUL(out)
 
-	line := strings.TrimSpace(out)
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = strings.TrimSpace(line[:i])
+	line := ""
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "{") {
+			line = l
+			break
+		}
 	}
 	if line == "" {
 		return LiveSample{}, fmt.Errorf("no stats output (container not running?)")

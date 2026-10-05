@@ -26,6 +26,10 @@ type Server struct {
 	Passphrase string            `yaml:"passphrase"`
 	Type       ServerType        `yaml:"type"`
 	Containers []ContainerConfig `yaml:"containers"`
+
+	// implicit marks the Local server added when the config defines none; it
+	// is not written back by Save unless it gained container settings.
+	implicit bool
 }
 
 // FindContainerConfig returns the ContainerConfig matching a docker container name.
@@ -67,13 +71,13 @@ type CommandGroup struct {
 
 // ContainerConfig holds per-container overrides within a server.
 type ContainerConfig struct {
-	Name           string         `yaml:"name"`            // docker container name or ID prefix to match
-	DisplayName    string         `yaml:"display_name"`    // custom display name
-	Favorite       bool           `yaml:"favorite"`        // show with star, yellow, sorted to top
-	Hidden         bool           `yaml:"hidden"`          // hide from container list
-	RootPath   string         `yaml:"root_path"`  // custom path to app root (default: /var/www/html)
-	CustomLogs []string       `yaml:"custom_logs"` // extra log file paths inside the container
-	Commands   []CommandGroup `yaml:"commands"`    // configurable command groups for the Commands screen
+	Name        string         `yaml:"name"`         // docker container name or ID prefix to match
+	DisplayName string         `yaml:"display_name"` // custom display name
+	Favorite    bool           `yaml:"favorite"`     // show with star, yellow, sorted to top
+	Hidden      bool           `yaml:"hidden"`       // hide from container list
+	RootPath    string         `yaml:"root_path"`    // custom path to app root (default: /var/www/html)
+	CustomLogs  []string       `yaml:"custom_logs"`  // extra log file paths inside the container
+	Commands    []CommandGroup `yaml:"commands"`     // configurable command groups for the Commands screen
 }
 
 type Config struct {
@@ -95,14 +99,8 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Expand ~ in key paths
-	for i, s := range cfg.Servers {
-		if len(s.Key) > 0 && s.Key[0] == '~' {
-			home, err := os.UserHomeDir()
-			if err == nil {
-				cfg.Servers[i].Key = filepath.Join(home, s.Key[1:])
-			}
-		}
+	for i := range cfg.Servers {
+		cfg.Servers[i].Key = expandHome(cfg.Servers[i].Key)
 		if cfg.Servers[i].Port == 0 {
 			cfg.Servers[i].Port = 22
 		}
@@ -111,12 +109,26 @@ func Load(path string) (*Config, error) {
 	// If no servers defined, add a local server
 	if len(cfg.Servers) == 0 {
 		cfg.Servers = append(cfg.Servers, Server{
-			Name: "Local",
-			Type: ServerTypeLocal,
+			Name:     "Local",
+			Type:     ServerTypeLocal,
+			implicit: true,
 		})
 	}
 
 	return cfg, nil
+}
+
+// expandHome expands a leading "~" or "~/" to the home directory. "~user"
+// forms are left untouched.
+func expandHome(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, p[1:])
 }
 
 func DefaultConfigPath() string {
@@ -131,31 +143,59 @@ func DefaultConfigPath() string {
 // paths under the home directory back to "~/…" so saving doesn't bake in an
 // absolute path that Load expanded. The whole file is rewritten, so any
 // comments or custom formatting in the original are not preserved.
+//
+// The file may hold SSH key passphrases, so it is written with mode 0600, and
+// atomically (temp file + rename) so a crash cannot leave it truncated. If
+// path is a symlink (e.g. a dotfiles checkout), the link target is updated.
 func (c *Config) Save(path string) error {
 	// Work on a copy so the in-memory (expanded) paths keep working.
 	out := *c
-	out.Servers = make([]Server, len(c.Servers))
-	copy(out.Servers, c.Servers)
-
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		for i := range out.Servers {
-			if k := out.Servers[i].Key; strings.HasPrefix(k, home+string(filepath.Separator)) {
-				out.Servers[i].Key = "~" + strings.TrimPrefix(k, home)
-			}
+	out.Servers = nil
+	home, _ := os.UserHomeDir()
+	for _, s := range c.Servers {
+		if s.implicit {
+			continue
 		}
+		if home != "" && strings.HasPrefix(s.Key, home+string(filepath.Separator)) {
+			s.Key = "~" + strings.TrimPrefix(s.Key, home)
+		}
+		out.Servers = append(out.Servers, s)
 	}
 
 	data, err := yaml.Marshal(&out)
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
-	if dir := filepath.Dir(path); dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("creating config dir: %w", err)
-		}
+	return writeFileAtomic(path, data)
+}
+
+// writeFileAtomic replaces path (or the file it links to) with data, mode 0600.
+func writeFileAtomic(path string, data []byte) error {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("writing config: %w", err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp") // mode 0600
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil
 }
@@ -176,10 +216,14 @@ func (c *Config) UpsertContainerConfig(serverName string, cc ContainerConfig) bo
 				cc.Commands = existing.Commands
 				cc.CustomLogs = existing.CustomLogs
 				c.Servers[si].Containers[ci] = cc
+				c.Servers[si].implicit = false
 				return true
 			}
 		}
 		c.Servers[si].Containers = append(c.Servers[si].Containers, cc)
+		// A container override must survive Save, so the server is now part
+		// of the written config.
+		c.Servers[si].implicit = false
 		return true
 	}
 	return false

@@ -12,10 +12,10 @@ type ShellTarget struct {
 
 	// SSH connection details. When Host is empty the container is reached via
 	// the local docker socket; otherwise the system `ssh` binary is used.
-	Host       string
-	Port       int
-	User       string
-	KeyPath    string
+	Host    string
+	Port    int
+	User    string
+	KeyPath string
 }
 
 // innerShellCmd is the command run inside the container: clear the screen so no

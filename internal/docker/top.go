@@ -28,15 +28,11 @@ const (
 // available the result will be empty.
 func TopProcesses(r Runner, containerID string, by ProcSortBy, limit int) ([]ProcessInfo, error) {
 	// -ww avoids truncating the command; we read comm+args via "args".
-	cmd := fmt.Sprintf(
-		`docker exec %s ps -eo pid,pcpu,pmem,comm --no-headers 2>/dev/null`,
-		shellQuote(containerID),
-	)
-	out, err := r.RunCommand(cmd)
+	cmd := "docker exec " + shellQuote(containerID) + " ps -eo pid,pcpu,pmem,comm --no-headers"
+	out, err := r.RunOutput(cmd, "")
 	if err != nil {
 		return nil, fmt.Errorf("ps: %w", err)
 	}
-	out = stripNUL(out)
 
 	var procs []ProcessInfo
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

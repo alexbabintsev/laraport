@@ -15,9 +15,9 @@ import (
 
 // OutputScreen streams command output into a scrollable viewport.
 type OutputScreen struct {
-	title   string
-	vp      viewport.Model
-	sp      spinner.Model
+	title        string
+	vp           viewport.Model
+	sp           spinner.Model
 	lines        []string
 	lastIsStatus bool // last appended line is an in-place status line
 	running      bool
@@ -160,7 +160,7 @@ func (s *OutputScreen) View() string {
 	header := styles.TitleBar.Render(headerContent)
 
 	lineCount := styles.DimStyle.Render(
-		lipgloss.NewStyle().Render(" "+strings.Repeat("-", 20)),
+		lipgloss.NewStyle().Render(" " + strings.Repeat("-", 20)),
 	)
 	_ = lineCount
 
@@ -175,8 +175,8 @@ func (s *OutputScreen) View() string {
 	var status string
 	if s.running {
 		status = styles.StatusBar.Width(s.width).Render(
-			styles.SpinnerStyle.Render("running...")+"  "+
-				styles.StatusBarKey.Render("esc")+" back when done"+wrapIndicator,
+			styles.SpinnerStyle.Render("running...") + "  " +
+				styles.StatusBarKey.Render("esc") + " back when done" + wrapIndicator,
 		)
 	} else {
 		var scrollInfo string
@@ -184,10 +184,10 @@ func (s *OutputScreen) View() string {
 			scrollInfo = styles.DimStyle.Render(fmt.Sprintf("%.0f%%", s.vp.ScrollPercent()*100))
 		}
 		status = styles.StatusBar.Width(s.width).Render(
-			styles.SuccessStyle.Render("done")+"  "+
-				scrollInfo+"  "+
-				styles.StatusBarKey.Render("↑↓")+" scroll  "+
-				styles.StatusBarKey.Render("esc")+" back"+wrapIndicator,
+			styles.SuccessStyle.Render("done") + "  " +
+				scrollInfo + "  " +
+				styles.StatusBarKey.Render("↑↓") + " scroll  " +
+				styles.StatusBarKey.Render("esc") + " back" + wrapIndicator,
 		)
 	}
 

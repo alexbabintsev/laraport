@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/alexbabintsev/laradok/internal/config"
 	"github.com/alexbabintsev/laradok/internal/connection"
@@ -18,16 +19,17 @@ type App struct {
 	stack          []tea.Model
 	width          int
 	height         int
-	runner         docker.Runner            // active runner for the selected server
-	activeServer   config.Server            // currently selected server
-	container      docker.Container         // active container
-	containerCfg   config.ContainerConfig   // config for the active container (may be zero)
-	stopTail       func()                   // stop function for active tail session
-	outputCh       <-chan string             // active streaming channel
-	sessionID      uint64                   // incremented on each new tail/output session
-	logFilePath    string                   // file path for lazy log chunk loading (empty for docker logs)
-	logTopLine     int                      // 1-based line number of earliest loaded line (0 = unknown/docker)
-	dbEngine       docker.DBEngine          // active database engine for the current DB session
+	runner         docker.Runner          // active runner for the selected server
+	activeServer   config.Server          // currently selected server
+	container      docker.Container       // active container
+	containerCfg   config.ContainerConfig // config for the active container (may be zero)
+	stopStream     func()                 // stops the active output/tail/download stream (nil = none)
+	outputCh       <-chan string          // active streaming channel
+	sessionID      uint64                 // incremented whenever a stream starts or its screen closes
+	connectAttempt uint64                 // incremented on every server connect attempt
+	logFilePath    string                 // file path for lazy log chunk loading (empty for docker logs)
+	logTopLine     int                    // 1-based line number of earliest loaded line (0 = unknown/docker)
+	dbEngine       docker.DBEngine        // active database engine for the current DB session
 }
 
 // NewApp creates the root App model starting on the server list screen.
@@ -79,21 +81,33 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 
 	case msgs.PopMsg:
-		// Stop any active tail when leaving log/output screen
-		if a.stopTail != nil {
-			a.stopTail()
-			a.stopTail = nil
-		}
-		a.outputCh = nil
+		// Leaving a screen ends any stream it owned; bumping the session also
+		// discards a stream that is still starting.
+		a.endStream()
+		a.sessionID++
 		a.pop()
+		// Back on the server list: the connection is no longer needed.
+		if _, ok := a.top().(*screens.ServerListScreen); ok {
+			a.closeRunner()
+			a.connectAttempt++ // ignore a connection still being established
+		}
 		return a, nil
 
 	case msgs.PushContainerListMsg:
+		a.closeRunner()
 		a.activeServer = msg.Server
+		a.connectAttempt++
 		screen := screens.NewContainerListScreen(msg.Server, nil, a.width, a.height)
-		return a, tea.Batch(a.push(screen), a.connectServerCmd(msg.Server))
+		return a, tea.Batch(a.push(screen), connectServerCmd(msg.Server, a.connectAttempt))
 
 	case msgs.ServerConnectedMsg:
+		if msg.Attempt != a.connectAttempt {
+			// The user left before the connection finished.
+			if msg.Err == nil {
+				closeAsync(msg.Runner)
+			}
+			return a, nil
+		}
 		if msg.Err == nil {
 			a.runner = msg.Runner
 		}
@@ -157,16 +171,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.PushOutputMsg:
 		screen := screens.NewOutputScreen(msg.Title, a.width, a.height)
-		ch, err := a.startCommand(msg)
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-		}
-		a.sessionID++
-		a.outputCh = ch
-		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+		return a, a.openStream(screen, a.commandStarter(msg))
 
 	case msgs.PushInfoMsg:
 		screen := screens.NewInfoScreen(a.container.Name, a.width, a.height)
@@ -265,8 +270,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.push(screen)
 
 	case msgs.PushRawCmdMsg:
-		sessionID := a.sessionID + 1
-		a.sessionID = sessionID
+		a.endStream()
+		a.sessionID++
+		sessionID := a.sessionID
 		cmd := msg.Cmd
 		runner := a.runner
 		containerID := a.container.ID
@@ -277,9 +283,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case msgs.RawCmdStartMsg:
+		if msg.SessionID != a.sessionID {
+			if msg.Stop != nil {
+				go msg.Stop()
+			}
+			return a, nil
+		}
 		if msg.Err == nil {
 			a.outputCh = msg.OutCh
-			a.stopTail = msg.Stop
+			a.stopStream = msg.Stop
 		}
 		updated, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = updated
@@ -346,88 +358,50 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.push(screen)
 
 	case msgs.PushSQLExecMsg:
-		config.SaveSQLHistory(msg.HistoryKey, msg.History) //nolint:errcheck
-		hostCmd := docker.DBExecHostCmd(msg.Engine, a.container.ID, msg.User, msg.Password, msg.DBName, msg.SQL)
+		config.SaveSQLHistory(msg.HistoryKey, msg.History) //nolint:errcheck // history is best-effort
+		hc := docker.DBExecHostCmd(msg.Engine, a.container.ID, msg.User, msg.Password, msg.DBName, msg.SQL)
 		screen := screens.NewOutputScreen(msg.Title, a.width, a.height)
-		ch, err := a.startCommand(msgs.PushOutputMsg{Title: msg.Title, HostCmd: hostCmd})
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-		}
-		a.sessionID++
-		a.outputCh = ch
-		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+		return a, a.openStream(screen, a.commandStarter(msgs.PushOutputMsg{Title: msg.Title, Host: hc}))
 
 	case msgs.PushDBDownloadMsg:
-		title := "Download dump — " + msg.DBName
-		screen := screens.NewOutputScreen(title, a.width, a.height)
-		var ch <-chan string
-		var err error
-		if msg.Engine == docker.EngineSQLite {
-			ch, err = docker.DumpSQLiteDatabase(a.runner, a.container.ID, msg.DBName)
-		} else if msg.Engine.IsMySQLFamily() {
-			ch, err = docker.DumpMySQLDatabase(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
-		} else if msg.CustomFormat {
-			ch, err = docker.DumpDatabaseCustom(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
-		} else if msg.Inserts {
-			ch, err = docker.DumpDatabaseInserts(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
-		} else {
-			ch, err = docker.DumpDatabase(a.runner, a.container.ID, msg.User, msg.Password, msg.DBName)
-		}
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-		}
-		a.sessionID++
-		a.outputCh = ch
-		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+		screen := screens.NewOutputScreen("Download dump — "+msg.DBName, a.width, a.height)
+		runner, containerID := a.runner, a.container.ID
+		return a, a.openStream(screen, func() (<-chan string, func(), error) {
+			switch {
+			case msg.Engine == docker.EngineSQLite:
+				return docker.DumpSQLiteDatabase(runner, containerID, msg.DBName)
+			case msg.Engine.IsMySQLFamily():
+				return docker.DumpMySQLDatabase(runner, containerID, msg.User, msg.Password, msg.DBName)
+			case msg.CustomFormat:
+				return docker.DumpPostgres(runner, containerID, msg.User, msg.Password, msg.DBName, docker.PGDumpCustom)
+			case msg.Inserts:
+				return docker.DumpPostgres(runner, containerID, msg.User, msg.Password, msg.DBName, docker.PGDumpInserts)
+			default:
+				return docker.DumpPostgres(runner, containerID, msg.User, msg.Password, msg.DBName, docker.PGDumpPlain)
+			}
+		})
 
 	case msgs.PushRedisDumpMsg:
-		title := "Download RDB — " + a.container.Name
-		screen := screens.NewOutputScreen(title, a.width, a.height)
-		pass, _ := docker.DetectRedisPassword(a.runner, a.container.ID)
-		ch, err := docker.DumpRedis(a.runner, a.container.ID, pass)
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-		}
-		a.sessionID++
-		a.outputCh = ch
-		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+		screen := screens.NewOutputScreen("Download RDB — "+a.container.Name, a.width, a.height)
+		runner, containerID := a.runner, a.container.ID
+		return a, a.openStream(screen, func() (<-chan string, func(), error) {
+			pass, err := docker.DetectRedisPassword(runner, containerID)
+			if err != nil {
+				return nil, nil, err
+			}
+			return docker.DumpRedis(runner, containerID, pass)
+		})
 
 	case msgs.PushMongoDumpMsg:
-		title := "Download dump — " + a.container.Name
-		screen := screens.NewOutputScreen(title, a.width, a.height)
-		ch, err := docker.DumpMongo(a.runner, a.container.ID, msg.User, msg.Password)
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-		}
-		a.sessionID++
-		a.outputCh = ch
-		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+		screen := screens.NewOutputScreen("Download dump — "+a.container.Name, a.width, a.height)
+		runner, containerID := a.runner, a.container.ID
+		return a, a.openStream(screen, func() (<-chan string, func(), error) {
+			return docker.DumpMongo(runner, containerID, msg.User, msg.Password)
+		})
 
 	case msgs.PushStorageDownloadMsg:
-		title := "Download Storage — " + a.container.Name
-		screen := screens.NewOutputScreen(title, a.width, a.height)
-		ch, err := a.startStorageDownloadCmd()
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-		}
-		a.sessionID++
-		a.outputCh = ch
-		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+		screen := screens.NewOutputScreen("Download Storage — "+a.container.Name, a.width, a.height)
+		return a, a.openStream(screen, a.storageDownloadStarter())
 
 	case msgs.PushFileBrowserMsg:
 		screen := screens.NewFileBrowserScreen("/", a.width, a.height)
@@ -448,18 +422,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case msgs.PushPathDownloadMsg:
-		title := "Download — " + msg.Path
-		screen := screens.NewOutputScreen(title, a.width, a.height)
-		ch, err := docker.DownloadPath(a.runner, a.container.ID, a.container.Name, msg.Path)
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-		}
-		a.sessionID++
-		a.outputCh = ch
-		return a, tea.Batch(a.push(screen), screens.WaitForLine(ch, a.sessionID))
+		screen := screens.NewOutputScreen("Download — "+msg.Path, a.width, a.height)
+		runner, containerID, containerName := a.runner, a.container.ID, a.container.Name
+		return a, a.openStream(screen, func() (<-chan string, func(), error) {
+			return docker.DownloadPath(runner, containerID, containerName, msg.Path)
+		})
 
 	case msgs.PushServerLogPickerMsg:
 		screen := screens.NewServerLogPickerScreen(a.containerCfg.CustomLogs, a.width, a.height)
@@ -476,32 +443,48 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			title = "Docker Logs"
 		}
 		screen := screens.NewLogTailScreen(title, a.width, a.height)
-		ch, stop, total, topLine, err := a.startLogTail(msg)
-		if err != nil {
-			errCh := make(chan string, 1)
-			errCh <- fmt.Sprintf("ERROR: %v", err)
-			close(errCh)
-			ch = errCh
-			stop = func() {}
-		}
-		a.sessionID++
-		a.outputCh = ch
-		a.stopTail = stop
-		// Track file path for lazy chunk loading; docker logs have no path
+		// Track file path for lazy chunk loading; docker logs have no path.
+		a.logFilePath, a.logTopLine = "", 0
 		if msg.LogType != "docker" && msg.FilePath != "" {
 			a.logFilePath = msg.FilePath
-			a.logTopLine = topLine
-		} else {
-			a.logFilePath = ""
-			a.logTopLine = 0
 		}
-		cmds := []tea.Cmd{a.push(screen), screens.WaitForLine(ch, a.sessionID)}
-		// Send init msg synchronously if we already have file position
-		if total > 0 && topLine > 0 {
-			sessionID := a.sessionID
-			cmds = append(cmds, func() tea.Msg {
-				return msgs.LogTailInitMsg{TotalLines: total, TopLine: topLine, SessionID: sessionID}
-			})
+		a.endStream()
+		a.sessionID++
+		id := a.sessionID
+		runner, containerID := a.runner, a.container.ID
+		return a, tea.Batch(a.push(screen), func() tea.Msg {
+			if msg.LogType == "docker" {
+				ch, stop, err := docker.TailDockerLogs(runner, containerID)
+				return msgs.StreamStartedMsg{SessionID: id, Ch: ch, Stop: stop, Err: err}
+			}
+			ch, stop, total, topLine, err := docker.TailLogFile(runner, containerID, msg.FilePath)
+			return msgs.StreamStartedMsg{SessionID: id, Ch: ch, Stop: stop, Err: err, TotalLines: total, TopLine: topLine}
+		})
+
+	case msgs.StreamStartedMsg:
+		if msg.SessionID != a.sessionID {
+			// Its screen was closed while the stream was starting.
+			if msg.Stop != nil {
+				go msg.Stop()
+			}
+			return a, nil
+		}
+		ch := msg.Ch
+		if msg.Err != nil {
+			errCh := make(chan string, 1)
+			errCh <- fmt.Sprintf("ERROR: %v", msg.Err)
+			close(errCh)
+			ch = errCh
+		} else {
+			a.stopStream = msg.Stop
+		}
+		a.outputCh = ch
+		cmds := []tea.Cmd{screens.WaitForLine(ch, a.sessionID)}
+		if msg.TotalLines > 0 && msg.TopLine > 0 {
+			a.logTopLine = msg.TopLine
+			updated, cmd := a.top().Update(msgs.LogTailInitMsg{TotalLines: msg.TotalLines, TopLine: msg.TopLine, SessionID: msg.SessionID})
+			a.stack[len(a.stack)-1] = updated
+			cmds = append(cmds, cmd)
 		}
 		return a, tea.Batch(cmds...)
 
@@ -563,6 +546,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.outputCh = nil
+		// The stream ended on its own; stop() still releases its resources.
+		a.endStream()
 		updated, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = updated
 		return a, cmd
@@ -582,103 +567,165 @@ func (a *App) View() string {
 }
 
 // connectServerCmd connects to a server asynchronously and returns a ServerConnectedMsg.
-func (a *App) connectServerCmd(s config.Server) tea.Cmd {
+func connectServerCmd(s config.Server, attempt uint64) tea.Cmd {
 	return func() tea.Msg {
-		runner, err := a.connectServer(s)
-		return msgs.ServerConnectedMsg{Server: s, Runner: runner, Err: err}
+		runner, err := connectServer(s)
+		return msgs.ServerConnectedMsg{Server: s, Runner: runner, Err: err, Attempt: attempt}
 	}
 }
 
 // connectServer creates a runner for the given server config.
-func (a *App) connectServer(s config.Server) (docker.Runner, error) {
-	switch s.Type {
-	case config.ServerTypeLocal:
-		return connection.NewLocalClient(), nil
-	case config.ServerTypeSSH:
+func connectServer(s config.Server) (docker.Runner, error) {
+	if s.Type == config.ServerTypeSSH {
 		return connection.ConnectSSH(s.Host, s.Port, s.User, s.Key, s.Passphrase)
-	default:
-		return connection.NewLocalClient(), nil
+	}
+	return connection.NewLocalClient(), nil
+}
+
+// closeRunner closes the active server connection, if any.
+func (a *App) closeRunner() {
+	if a.runner != nil {
+		closeAsync(a.runner)
+		a.runner = nil
 	}
 }
 
-// startCommand kicks off the appropriate docker command for PushOutputMsg.
-func (a *App) startCommand(msg msgs.PushOutputMsg) (<-chan string, error) {
-	if msg.HostCmd != "" {
-		ch, _, err := a.runner.StreamCommand(msg.HostCmd)
-		return ch, err
+// closeAsync closes r without blocking the UI.
+func closeAsync(r docker.Runner) {
+	if r != nil {
+		go r.Close() //nolint:errcheck
 	}
-	if msg.RawCmd != "" {
-		ch, _, err := docker.ExecCustomCommand(a.runner, a.container.ID, a.containerCfg.RootPath, msg.RawCmd)
-		return ch, err
-	}
-	ch, _, err := docker.ExecArtisan(a.runner, a.container.ID, a.containerCfg.RootPath, msg.ArtisanCmd)
-	return ch, err
 }
 
-// startStorageDownloadCmd checks storage size then streams the download.
-// Emits progress lines including size info before starting the transfer.
-func (a *App) startStorageDownloadCmd() (<-chan string, error) {
-	runner := a.runner
-	containerID := a.container.ID
-	containerName := a.container.Name
-	rootPath := a.containerCfg.RootPath
+// streamStarter starts an output stream. It runs off the UI goroutine.
+type streamStarter func() (<-chan string, func(), error)
 
-	ch := make(chan string, 16)
-	go func() {
-		defer close(ch)
-		ch <- "Checking storage size..."
-		size, _ := docker.StorageSize(runner, containerID, rootPath)
-		ch <- fmt.Sprintf("Storage size: %s", size)
-		ch <- "Starting archive (tar | gzip | base64)..."
+// openStream pushes screen and starts its stream asynchronously; the result
+// arrives as a StreamStartedMsg for the new session.
+func (a *App) openStream(screen tea.Model, start streamStarter) tea.Cmd {
+	a.endStream()
+	a.sessionID++
+	id := a.sessionID
+	return tea.Batch(a.push(screen), func() tea.Msg {
+		ch, stop, err := start()
+		return msgs.StreamStartedMsg{SessionID: id, Ch: ch, Stop: stop, Err: err}
+	})
+}
 
-		dlCh, err := docker.DownloadStorage(runner, containerID, containerName, rootPath)
-		if err != nil {
-			ch <- fmt.Sprintf("ERROR: %v", err)
-			return
+// endStream stops the active stream (without blocking the UI) and forgets it.
+func (a *App) endStream() {
+	if a.stopStream != nil {
+		go a.stopStream()
+		a.stopStream = nil
+	}
+	a.outputCh = nil
+}
+
+// commandStarter returns the starter for a PushOutputMsg command.
+func (a *App) commandStarter(msg msgs.PushOutputMsg) streamStarter {
+	runner, containerID, rootPath := a.runner, a.container.ID, a.containerCfg.RootPath
+	return func() (<-chan string, func(), error) {
+		switch {
+		case msg.Host.Cmd != "":
+			return docker.Stream(runner, msg.Host)
+		case msg.RawCmd != "":
+			return docker.ExecCustomCommand(runner, containerID, rootPath, msg.RawCmd)
+		default:
+			return docker.ExecArtisan(runner, containerID, rootPath, msg.ArtisanCmd)
 		}
-		for line := range dlCh {
-			ch <- line
+	}
+}
+
+// storageDownloadStarter reports the storage size, then streams the archive.
+func (a *App) storageDownloadStarter() streamStarter {
+	runner, containerID, containerName, rootPath := a.runner, a.container.ID, a.container.Name, a.containerCfg.RootPath
+	return func() (<-chan string, func(), error) {
+		size, _ := docker.StorageSize(runner, containerID, rootPath)
+		ch, stop, err := docker.DownloadStorage(runner, containerID, containerName, rootPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return prependLines([]string{"Storage size: " + size}, ch, stop)
+	}
+}
+
+// prependLines returns a stream that yields lines first and then everything
+// from ch. Stopping it stops the underlying stream.
+func prependLines(lines []string, ch <-chan string, stop func()) (<-chan string, func(), error) {
+	out := make(chan string, 16)
+	quit := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer close(out)
+		send := func(l string) bool {
+			select {
+			case out <- l:
+				return true
+			case <-quit:
+				return false
+			}
+		}
+		for _, l := range lines {
+			if !send(l) {
+				return
+			}
+		}
+		for l := range ch {
+			if !send(l) {
+				return
+			}
 		}
 	}()
-	return ch, nil
+	var once sync.Once
+	return out, func() {
+		once.Do(func() { close(quit) })
+		stop()
+		<-done
+	}, nil
 }
 
 // loadLogFilesCmd lists log files in the container asynchronously.
 func (a *App) loadLogFilesCmd() tea.Cmd {
+	runner, containerID, rootPath := a.runner, a.container.ID, a.containerCfg.RootPath
 	return func() tea.Msg {
-		files, err := docker.ListLogFiles(a.runner, a.container.ID, a.containerCfg.RootPath)
+		files, err := docker.ListLogFiles(runner, containerID, rootPath)
 		return msgs.LogFilesLoadedMsg{Files: files, Err: err}
 	}
 }
 
 // discoverContainerLogsCmd probes the selected container for service log files asynchronously.
 func (a *App) discoverContainerLogsCmd() tea.Cmd {
+	runner, containerID := a.runner, a.container.ID
 	return func() tea.Msg {
-		logs, err := docker.DiscoverContainerLogs(a.runner, a.container.ID)
+		logs, err := docker.DiscoverContainerLogs(runner, containerID)
 		return msgs.HostLogsDiscoveredMsg{Logs: logs, Err: err}
 	}
 }
 
 // loadArtisanCommandsCmd fetches the list of artisan commands from the container.
 func (a *App) loadArtisanCommandsCmd() tea.Cmd {
+	runner, containerID, rootPath := a.runner, a.container.ID, a.containerCfg.RootPath
 	return func() tea.Msg {
-		cmds, err := docker.ListArtisanCommands(a.runner, a.container.ID, a.containerCfg.RootPath)
+		cmds, err := docker.ListArtisanCommands(runner, containerID, rootPath)
 		return msgs.ArtisanCommandsLoadedMsg{Commands: cmds, Err: err}
 	}
 }
 
 // loadComposerCommandsCmd fetches available composer commands from the container.
 func (a *App) loadComposerCommandsCmd() tea.Cmd {
+	runner, containerID, rootPath := a.runner, a.container.ID, a.containerCfg.RootPath
 	return func() tea.Msg {
-		cmds, bin, err := docker.ListComposerCommands(a.runner, a.container.ID, a.containerCfg.RootPath)
+		cmds, bin, err := docker.ListComposerCommands(runner, containerID, rootPath)
 		return msgs.ComposerCommandsLoadedMsg{Commands: cmds, ComposerBin: bin, Err: err}
 	}
 }
 
 // loadNpmCommandsCmd fetches available npm scripts from the container.
 func (a *App) loadNpmCommandsCmd() tea.Cmd {
+	runner, containerID, rootPath := a.runner, a.container.ID, a.containerCfg.RootPath
 	return func() tea.Msg {
-		cmds, err := docker.ListNpmCommands(a.runner, a.container.ID, a.containerCfg.RootPath)
+		cmds, err := docker.ListNpmCommands(runner, containerID, rootPath)
 		return msgs.NpmCommandsLoadedMsg{Commands: cmds, Err: err}
 	}
 }
@@ -704,18 +751,19 @@ func (a *App) saveContainerConfig(cc config.ContainerConfig) error {
 
 // loadCapsCmd detects container capabilities (artisan, composer, npm, psql, php) asynchronously.
 func (a *App) loadCapsCmd() tea.Cmd {
+	runner, containerID, rootPath := a.runner, a.container.ID, a.containerCfg.RootPath
 	return func() tea.Msg {
-		caps, _ := docker.DetectCapabilities(a.runner, a.container.ID, a.containerCfg.RootPath)
-		return msgs.ContainerCapsLoadedMsg{Caps: caps}
+		caps, err := docker.DetectCapabilities(runner, containerID, rootPath)
+		return msgs.ContainerCapsLoadedMsg{Caps: caps, Err: err}
 	}
 }
 
 // loadRedisPrefixCmd detects the Redis password and builds the redis-cli prefix.
 func (a *App) loadRedisPrefixCmd() tea.Cmd {
-	containerID := a.container.ID
+	runner, containerID := a.runner, a.container.ID
 	return func() tea.Msg {
-		pass, _ := docker.DetectRedisPassword(a.runner, containerID)
-		return msgs.RedisReadyMsg{CLIPrefix: docker.RedisCLIPrefix(containerID, pass)}
+		pass, _ := docker.DetectRedisPassword(runner, containerID)
+		return msgs.RedisReadyMsg{ContainerID: containerID, Password: pass}
 	}
 }
 
@@ -746,23 +794,23 @@ func (a *App) loadInfoCmd() tea.Cmd {
 
 // loadMongoCredsCmd detects MongoDB credentials from the active container env.
 func (a *App) loadMongoCredsCmd() tea.Cmd {
-	containerID := a.container.ID
+	runner, containerID := a.runner, a.container.ID
 	return func() tea.Msg {
-		user, pass, _ := docker.DetectMongoCredentials(a.runner, containerID)
+		user, pass, _ := docker.DetectMongoCredentials(runner, containerID)
 		return msgs.MongoReadyMsg{User: user, Password: pass}
 	}
 }
 
 // loadDBCredsCmd detects database credentials from the active container env.
 func (a *App) loadDBCredsCmd() tea.Cmd {
-	engine := a.dbEngine
+	engine, runner, containerID := a.dbEngine, a.runner, a.container.ID
 	return func() tea.Msg {
 		var user, pass string
 		var err error
 		if engine.IsMySQLFamily() {
-			user, pass, err = docker.DetectMySQLCredentials(a.runner, a.container.ID)
+			user, pass, err = docker.DetectMySQLCredentials(runner, containerID)
 		} else {
-			user, pass, err = docker.DetectPostgresCredentials(a.runner, a.container.ID)
+			user, pass, err = docker.DetectPostgresCredentials(runner, containerID)
 		}
 		return msgs.DBCredsLoadedMsg{User: user, Password: pass, Err: err}
 	}
@@ -770,31 +818,18 @@ func (a *App) loadDBCredsCmd() tea.Cmd {
 
 // loadDBListCmd lists databases in the active database container.
 func (a *App) loadDBListCmd(user, password string) tea.Cmd {
-	engine := a.dbEngine
-	rootPath := a.containerCfg.RootPath
+	engine, runner, containerID, rootPath := a.dbEngine, a.runner, a.container.ID, a.containerCfg.RootPath
 	return func() tea.Msg {
 		var dbs []string
 		var err error
 		switch {
 		case engine == docker.EngineSQLite:
-			dbs, err = docker.ListSQLiteDatabases(a.runner, a.container.ID, rootPath)
+			dbs, err = docker.ListSQLiteDatabases(runner, containerID, rootPath)
 		case engine.IsMySQLFamily():
-			dbs, err = docker.ListMySQLDatabases(a.runner, a.container.ID, user, password)
+			dbs, err = docker.ListMySQLDatabases(runner, containerID, user, password)
 		default:
-			dbs, err = docker.ListDatabases(a.runner, a.container.ID, user, password)
+			dbs, err = docker.ListDatabases(runner, containerID, user, password)
 		}
 		return msgs.DBListLoadedMsg{Databases: dbs, Err: err}
-	}
-}
-
-// startLogTail starts tailing logs inside the container.
-// For file logs, also returns total lines and top line number for positioning.
-func (a *App) startLogTail(msg msgs.PushLogTailMsg) (<-chan string, func(), int, int, error) {
-	switch msg.LogType {
-	case "docker":
-		ch, stop, err := docker.TailDockerLogs(a.runner, a.container.ID)
-		return ch, stop, 0, 0, err
-	default:
-		return docker.TailLogFile(a.runner, a.container.ID, msg.FilePath)
 	}
 }

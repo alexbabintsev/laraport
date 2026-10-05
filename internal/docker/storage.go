@@ -1,117 +1,44 @@
 package docker
 
 import (
-	"encoding/base64"
 	"fmt"
-	"os"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
-	"time"
 )
-
-// StatusLinePrefix marks a streamed output line that the OutputScreen should
-// render in place, overwriting the previous status line (e.g. a "received N MB"
-// counter) instead of appending. It uses control bytes that never occur in real
-// command output.
-const StatusLinePrefix = "\x00status\x00"
 
 // StorageSize returns the human-readable size of the storage directory inside the container.
 func StorageSize(r Runner, containerID, rootPath string) (string, error) {
-	dir := storageDir(rootPath)
-	cmd := ExecShCmd(containerID, "du -sh "+shellQuote(dir)+" 2>/dev/null | cut -f1")
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		out, err := r.RunCommand(cmd)
-		if err != nil {
-			continue
-		}
-		out = stripNUL(out)
-		size := strings.TrimSpace(out)
-		if size != "" {
-			return size, nil
-		}
+	out, err := r.RunOutput(ExecShCmd(containerID, "du -sh "+shellQuote(storageDir(rootPath))+" 2>/dev/null | cut -f1"), "")
+	if size := strings.TrimSpace(out); size != "" {
+		return size, nil
+	}
+	if err != nil {
+		return "?", err
 	}
 	return "?", nil
 }
 
-// DownloadStorage archives the storage directory inside the container via
-// tar | gzip | base64, transfers it line-by-line, decodes locally, and
-// saves to ~/Downloads/<containerName>_storage_<timestamp>.tar.gz.
-// Returns a channel emitting progress lines and a final "Saved to: <path>" line.
-func DownloadStorage(r Runner, containerID, containerName, rootPath string) (<-chan string, error) {
-	dir := storageDir(rootPath)
-	// tar the directory relative to its parent so archive contains "storage/..."
-	parent := filepath.Dir(strings.TrimRight(dir, "/"))
-	base := filepath.Base(strings.TrimRight(dir, "/"))
-
-	// -w 76 wraps base64 output at 76 chars per line so bufio.Scanner can read it.
-	cmd := ExecShCmd(containerID,
-		"tar -czf - -C "+shellQuote(parent)+" "+shellQuote(base)+" 2>/tmp/_ld_err | base64 -w 76; cat /tmp/_ld_err >&2")
-	rawCh, _, err := r.StreamCommand(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("storage archive: %w", err)
+// archiveScript tars p (relative to its parent so the archive holds
+// "<base>/…") to stdout. GNU tar exits 1 for "file changed as we read it",
+// which is routine for live log files, so that status is treated as success;
+// real failures (status 2+) still fail the download.
+func archiveScript(p string) string {
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		p = "/"
 	}
+	parent, base := path.Dir(p), path.Base(p)
+	return "tar -czf - -C " + shellQuote(parent) + " " + shellQuote(base) + "; s=$?; [ $s -eq 1 ] && s=0; exit $s"
+}
 
-	outCh := make(chan string, 16)
-	go func() {
-		defer close(outCh)
-		outCh <- fmt.Sprintf("Archiving %s ...", dir)
-
-		var b64 strings.Builder
-		lineCount := 0
-		for line := range rawCh {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				continue
-			}
-			b64.WriteString(trimmed)
-			lineCount++
-			if lineCount%5000 == 0 {
-				outCh <- StatusLinePrefix + fmt.Sprintf("  received %d MB", b64.Len()*3/4/1024/1024)
-			}
-		}
-
-		if b64.Len() == 0 {
-			outCh <- "ERROR: no data received — is the storage directory empty or missing?"
-			return
-		}
-
-		outCh <- fmt.Sprintf("  received %d MB, decoding...", b64.Len()*3/4/1024/1024)
-
-		decoded, err := base64.StdEncoding.DecodeString(b64.String())
-		if err != nil {
-			decoded, err = base64.RawStdEncoding.DecodeString(b64.String())
-			if err != nil {
-				outCh <- fmt.Sprintf("ERROR decoding archive: %v", err)
-				return
-			}
-		}
-
-		home, err := os.UserHomeDir()
-		if err != nil {
-			outCh <- fmt.Sprintf("ERROR getting home dir: %v", err)
-			return
-		}
-		downloadsDir := filepath.Join(home, "Downloads")
-		_ = os.MkdirAll(downloadsDir, 0o755)
-
-		ts := time.Now().Format("20060102_150405")
-		safe := strings.NewReplacer("/", "_", " ", "_").Replace(containerName)
-		outPath := filepath.Join(downloadsDir, fmt.Sprintf("%s_storage_%s.tar.gz", safe, ts))
-
-		if err := os.WriteFile(outPath, decoded, 0o644); err != nil {
-			outCh <- fmt.Sprintf("ERROR saving file: %v", err)
-			return
-		}
-
-		sizeMB := float64(len(decoded)) / 1024 / 1024
-		outCh <- fmt.Sprintf("Saved to: %s (%.2f MB)", outPath, sizeMB)
-	}()
-
-	return outCh, nil
+// DownloadStorage archives the app's storage directory and streams it to
+// ~/Downloads/<container>_storage_<timestamp>.tar.gz.
+func DownloadStorage(r Runner, containerID, containerName, rootPath string) (<-chan string, func(), error) {
+	dir := storageDir(rootPath)
+	hc := ExecStreamScript(containerID, archiveScript(dir))
+	name := fmt.Sprintf("%s_storage_%s.tar.gz", safeFileName(containerName), timestamp())
+	return download(r, hc, fmt.Sprintf("Archiving %s ...", dir), name, nil)
 }
 
 // DirEntry is a single file or directory inside the storage browser.
@@ -148,21 +75,10 @@ exit 0`, shellQuote(path))
 
 	cmd := ExecShCmd(containerID, script)
 
-	// du/stat on some entries (e.g. /proc) may exit non-zero, so we don't treat a
-	// non-zero exit as fatal — the loop still prints valid lines for every entry.
-	// Only surface an error when we parsed nothing at all.
-	var out string
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		out, lastErr = r.RunCommand(cmd)
-		if strings.TrimSpace(out) != "" {
-			break
-		}
-	}
-	out = stripNUL(out)
+	// The script always exits 0 (du/stat failures on entries such as /proc are
+	// tolerated), so an error means docker exec itself failed — but surface it
+	// only when nothing could be parsed.
+	out, lastErr := r.RunOutput(cmd, "")
 
 	var dirs, files []DirEntry
 	for _, line := range strings.Split(out, "\n") {
@@ -198,81 +114,13 @@ exit 0`, shellQuote(path))
 	return entries, nil
 }
 
-// DownloadPath archives an arbitrary file or directory inside the container via
-// tar | gzip | base64, streams it, decodes locally, and saves to
-// ~/Downloads/<containerName>_<basename>_<timestamp>.tar.gz. It mirrors
-// DownloadStorage but works for any path. Nothing is written on the server, so
-// there is no remote artifact to clean up afterwards.
-func DownloadPath(r Runner, containerID, containerName, path string) (<-chan string, error) {
-	path = strings.TrimRight(path, "/")
-	parent := filepath.Dir(path)
-	base := filepath.Base(path)
-
-	cmd := ExecShCmd(containerID,
-		"tar -czf - -C "+shellQuote(parent)+" "+shellQuote(base)+" 2>/tmp/_ld_err | base64 -w 76; cat /tmp/_ld_err >&2")
-	rawCh, _, err := r.StreamCommand(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("archive %s: %w", path, err)
-	}
-
-	outCh := make(chan string, 16)
-	go func() {
-		defer close(outCh)
-		outCh <- fmt.Sprintf("Archiving %s ...", path)
-
-		var b64 strings.Builder
-		lineCount := 0
-		for line := range rawCh {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				continue
-			}
-			b64.WriteString(trimmed)
-			lineCount++
-			if lineCount%5000 == 0 {
-				outCh <- StatusLinePrefix + fmt.Sprintf("  received %d MB", b64.Len()*3/4/1024/1024)
-			}
-		}
-
-		if b64.Len() == 0 {
-			outCh <- "ERROR: no data received — is the path empty or missing?"
-			return
-		}
-
-		outCh <- fmt.Sprintf("  received %d MB, decoding...", b64.Len()*3/4/1024/1024)
-
-		decoded, err := base64.StdEncoding.DecodeString(b64.String())
-		if err != nil {
-			decoded, err = base64.RawStdEncoding.DecodeString(b64.String())
-			if err != nil {
-				outCh <- fmt.Sprintf("ERROR decoding archive: %v", err)
-				return
-			}
-		}
-
-		home, err := os.UserHomeDir()
-		if err != nil {
-			outCh <- fmt.Sprintf("ERROR getting home dir: %v", err)
-			return
-		}
-		downloadsDir := filepath.Join(home, "Downloads")
-		_ = os.MkdirAll(downloadsDir, 0o755)
-
-		ts := time.Now().Format("20060102_150405")
-		safe := strings.NewReplacer("/", "_", " ", "_").Replace(containerName)
-		safeBase := strings.NewReplacer("/", "_", " ", "_").Replace(base)
-		outPath := filepath.Join(downloadsDir, fmt.Sprintf("%s_%s_%s.tar.gz", safe, safeBase, ts))
-
-		if err := os.WriteFile(outPath, decoded, 0o644); err != nil {
-			outCh <- fmt.Sprintf("ERROR saving file: %v", err)
-			return
-		}
-
-		sizeMB := float64(len(decoded)) / 1024 / 1024
-		outCh <- fmt.Sprintf("Saved to: %s (%.2f MB)", outPath, sizeMB)
-	}()
-
-	return outCh, nil
+// DownloadPath archives an arbitrary file or directory inside the container
+// and streams it to ~/Downloads/<container>_<basename>_<timestamp>.tar.gz.
+// Nothing is written on the server.
+func DownloadPath(r Runner, containerID, containerName, p string) (<-chan string, func(), error) {
+	hc := ExecStreamScript(containerID, archiveScript(p))
+	name := fmt.Sprintf("%s_%s_%s.tar.gz", safeFileName(containerName), safeFileName(path.Base(strings.TrimRight(p, "/"))), timestamp())
+	return download(r, hc, fmt.Sprintf("Archiving %s ...", p), name, nil)
 }
 
 func storageDir(rootPath string) string {

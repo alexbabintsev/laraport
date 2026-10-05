@@ -14,15 +14,15 @@ import (
 
 // RawCmdScreen lets the user type any shell command, run it, and interact with its stdin.
 type RawCmdScreen struct {
-	cmdInput  textinput.Model // top: command to run
+	cmdInput   textinput.Model // top: command to run
 	stdinInput textinput.Model // bottom: interactive stdin when running
-	sp        spinner.Model
-	vp        viewport.Model
-	lines     []string
-	running   bool
-	inCh      chan<- string // nil when not running
-	width     int
-	height    int
+	sp         spinner.Model
+	vp         viewport.Model
+	lines      []string
+	running    bool
+	inCh       chan<- string // nil when not running
+	width      int
+	height     int
 }
 
 func NewRawCmdScreen(width, height int) *RawCmdScreen {
@@ -167,14 +167,14 @@ func (s *RawCmdScreen) View() string {
 	var status string
 	if s.running {
 		status = styles.StatusBar.Width(s.width).Render(
-			s.sp.View()+" running...  "+
-				styles.StatusBarKey.Render("enter")+" send input  "+
-				styles.StatusBarKey.Render("esc")+" back",
+			s.sp.View() + " running...  " +
+				styles.StatusBarKey.Render("enter") + " send input  " +
+				styles.StatusBarKey.Render("esc") + " back",
 		)
 	} else {
 		status = styles.StatusBar.Width(s.width).Render(
-			styles.StatusBarKey.Render("enter")+" run  "+
-				styles.StatusBarKey.Render("esc")+" back",
+			styles.StatusBarKey.Render("enter") + " run  " +
+				styles.StatusBarKey.Render("esc") + " back",
 		)
 	}
 

@@ -7,14 +7,14 @@ import (
 
 // ContainerCaps describes which features are available in a container.
 type ContainerCaps struct {
-	HasLaravel  bool // artisan file exists
-	HasComposer bool // composer binary or composer.phar present
-	HasNpm      bool // npm binary present
-	HasPostgres bool // psql binary present
-	HasMySQL    bool // mysql binary present
-	IsMariaDB   bool // mysql client reports a MariaDB distribution
-	IsPercona   bool // mysql client reports a Percona distribution
-	HasSQLite   bool // sqlite3 binary present
+	HasLaravel  bool   // artisan file exists
+	HasComposer bool   // composer binary or composer.phar present
+	HasNpm      bool   // npm binary present
+	HasPostgres bool   // psql binary present
+	HasMySQL    bool   // mysql binary present
+	IsMariaDB   bool   // mysql client reports a MariaDB distribution
+	IsPercona   bool   // mysql client reports a Percona distribution
+	HasSQLite   bool   // sqlite3 binary present
 	HasRedis    bool   // redis-cli binary present
 	MongoBin    string // "mongosh", "mongo", or "" — mongo shell binary present
 	HasPHP      bool   // php binary present
@@ -64,8 +64,8 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`(command -v composer >/dev/null 2>&1 || [ -f %s ] || [ -f /app/composer.phar ]) && echo HAS_COMPOSER; `+
 			`command -v npm >/dev/null 2>&1 && echo HAS_NPM; `+
 			`command -v psql >/dev/null 2>&1 && echo HAS_POSTGRES; `+
-			`command -v mysql >/dev/null 2>&1 && echo HAS_MYSQL; `+
-			`command -v mysql >/dev/null 2>&1 && { v=$(mysql --version 2>/dev/null); echo "$v" | grep -qi mariadb && echo IS_MARIADB; echo "$v" | grep -qi percona && echo IS_PERCONA; }; `+
+			// MariaDB 11+ images ship only the "mariadb" client (no mysql symlink).
+			`m=$(command -v mysql || command -v mariadb) && { echo HAS_MYSQL; v=$("$m" --version 2>/dev/null); echo "$v" | grep -qi mariadb && echo IS_MARIADB; echo "$v" | grep -qi percona && echo IS_PERCONA; }; `+
 			`command -v sqlite3 >/dev/null 2>&1 && echo HAS_SQLITE; `+
 			`command -v redis-cli >/dev/null 2>&1 && echo HAS_REDIS; `+
 			`if command -v mongosh >/dev/null 2>&1; then echo HAS_MONGOSH; elif command -v mongo >/dev/null 2>&1; then echo HAS_MONGO; fi; `+
@@ -75,8 +75,10 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 	)
 	cmd := ExecShCmd(containerID, script)
 
-	out, _ := r.RunCommand(cmd)
-	out = stripNUL(out)
+	out, err := r.RunOutput(cmd, "")
+	if err != nil {
+		return ContainerCaps{}, fmt.Errorf("probing container: %w", err)
+	}
 
 	caps := ContainerCaps{}
 	for _, line := range strings.Split(out, "\n") {

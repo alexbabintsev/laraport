@@ -200,9 +200,9 @@ func (s *DBListScreen) View() string {
 		)
 	} else {
 		helpStr = styles.StatusBar.Width(s.width).Render(
-			styles.StatusBarKey.Render("↑↓")+" navigate  "+
-				styles.StatusBarKey.Render("enter")+" select  "+
-				styles.StatusBarKey.Render("esc")+" back",
+			styles.StatusBarKey.Render("↑↓") + " navigate  " +
+				styles.StatusBarKey.Render("enter") + " select  " +
+				styles.StatusBarKey.Render("esc") + " back",
 		)
 	}
 

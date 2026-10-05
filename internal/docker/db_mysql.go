@@ -1,174 +1,73 @@
 package docker
 
-import (
-	"encoding/base64"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-)
+import "fmt"
 
 // DetectMySQLCredentials reads MySQL credentials from container env.
-// Prefers MYSQL_USER/MYSQL_PASSWORD; falls back to root with MYSQL_ROOT_PASSWORD.
+// Prefers root with MYSQL_ROOT_PASSWORD (a non-root MYSQL_USER usually cannot
+// see every database); falls back to MYSQL_USER/MYSQL_PASSWORD, then to root
+// without a password. MARIADB_* variables are honoured too.
 func DetectMySQLCredentials(r Runner, containerID string) (user, password string, err error) {
-	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, shellQuote(containerID))
-	out, err := r.RunCommand(cmd)
+	env, err := containerEnv(r, containerID)
 	if err != nil {
-		return "", "", fmt.Errorf("docker inspect: %w", err)
+		return "", "", err
 	}
-	out = stripNUL(out)
-
-	var mysqlUser, mysqlPass, rootPass string
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if k, v, ok := strings.Cut(line, "="); ok {
-			switch k {
-			case "MYSQL_USER":
-				mysqlUser = v
-			case "MYSQL_PASSWORD":
-				mysqlPass = v
-			case "MYSQL_ROOT_PASSWORD":
-				rootPass = v
+	first := func(keys ...string) string {
+		for _, k := range keys {
+			if v := env[k]; v != "" {
+				return v
 			}
 		}
+		return ""
 	}
-
-	// A non-root MySQL_USER usually cannot SHOW ALL databases, so prefer root
-	// when a root password is available; otherwise use the configured user.
-	if rootPass != "" {
+	if rootPass := first("MYSQL_ROOT_PASSWORD", "MARIADB_ROOT_PASSWORD"); rootPass != "" {
 		return "root", rootPass, nil
 	}
-	if mysqlUser != "" {
-		return mysqlUser, mysqlPass, nil
+	if u := first("MYSQL_USER", "MARIADB_USER"); u != "" {
+		return u, first("MYSQL_PASSWORD", "MARIADB_PASSWORD"), nil
 	}
 	return "root", "", nil
 }
 
-// mysqlExec builds a `docker exec` invocation running the mysql client with the
-// given -e SQL statement. Password is passed via MYSQL_PWD env to avoid the
-// "password on command line" warning.
-func mysqlExec(containerID, user, password, dbName, sql string) string {
-	db := ""
-	if dbName != "" {
-		db = " " + shellQuote(dbName)
-	}
-	return fmt.Sprintf(
-		`docker exec -e MYSQL_PWD=%s %s mysql -u %s%s -e %s`,
-		shellQuote(password), shellQuote(containerID), shellQuote(user), db, shellQuote(sql),
-	)
+// mysqlClient / mysqlDump pick the client binaries: MariaDB 11+ images only
+// ship "mariadb" / "mariadb-dump".
+const (
+	mysqlClient = `"$(command -v mysql || command -v mariadb || echo mysql)"`
+	mysqlDump   = `"$(command -v mysqldump || command -v mariadb-dump || echo mysqldump)"`
+)
+
+// mysqlSecrets passes the password via stdin → MYSQL_PWD.
+func mysqlSecrets(password string) []Secret {
+	return []Secret{{Name: "MYSQL_PWD", Value: password}}
 }
 
 // ListMySQLDatabases returns non-system databases from the MySQL container.
 func ListMySQLDatabases(r Runner, containerID, user, password string) ([]string, error) {
-	cmd := mysqlExec(containerID, user, password, "", "SHOW DATABASES") + " --batch --skip-column-names"
-	var out string
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		raw, err := r.RunCommand(cmd)
-		if err != nil {
-			continue
-		}
-		raw = stripNUL(raw)
-		out = strings.TrimSpace(raw)
-		if out != "" {
-			break
-		}
+	script := mysqlClient + " -u " + shellQuote(user) + " --batch --skip-column-names -e " + shellQuote("SHOW DATABASES")
+	hc := ExecScript(containerID, script, mysqlSecrets(password)...)
+	out, err := r.RunOutput(hc.Cmd, hc.Input)
+	if err != nil {
+		return nil, fmt.Errorf("listing databases: %w", err)
 	}
-	skip := map[string]bool{
+	return parseDatabaseList(out, map[string]bool{
 		"information_schema": true,
 		"performance_schema": true,
 		"mysql":              true,
 		"sys":                true,
-	}
-	var dbs []string
-	seen := map[string]bool{}
-	for _, line := range strings.Split(out, "\n") {
-		name := strings.TrimSpace(line)
-		if name == "" || skip[name] || seen[name] {
-			continue
-		}
-		seen[name] = true
-		dbs = append(dbs, name)
-	}
-	return dbs, nil
+	}), nil
 }
 
-// MySQLExecCmd builds the host command used to run an arbitrary SQL statement
-// (with a tabular table-style output) against a MySQL database.
-func MySQLExecCmd(containerID, user, password, dbName, sql string) string {
-	return fmt.Sprintf(
-		`docker exec -e MYSQL_PWD=%s %s mysql -u %s --table %s -e %s`,
-		ShellQuote(password), shellQuote(containerID), ShellQuote(user),
-		ShellQuote(dbName), ShellQuote(sql),
-	)
+// MySQLExecCmd builds the command running one SQL statement against dbName,
+// printed as a table.
+func MySQLExecCmd(containerID, user, password, dbName, sql string) HostCommand {
+	script := mysqlClient + " -u " + shellQuote(user) + " --table " + shellQuote(dbName) + " -e " + shellQuote(sql)
+	return ExecStreamScript(containerID, script, mysqlSecrets(password)...)
 }
 
-// DumpMySQLDatabase runs mysqldump | gzip | base64 on the container,
-// reassembles locally, and saves to ~/Downloads/<dbName>_<timestamp>.sql.gz.
-func DumpMySQLDatabase(r Runner, containerID, user, password, dbName string) (<-chan string, error) {
-	cmd := fmt.Sprintf(
-		`docker exec -e MYSQL_PWD=%s %s sh -c %s`,
-		shellQuote(password), shellQuote(containerID),
-		shellQuote("mysqldump --no-tablespaces --single-transaction -u "+shellQuote(user)+" "+shellQuote(dbName)+" | gzip | base64 -w 76"),
-	)
-	rawCh, _, err := r.StreamCommand(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("mysqldump stream: %w", err)
-	}
-
-	outCh := make(chan string, 16)
-	go func() {
-		defer close(outCh)
-		outCh <- "Starting mysqldump..."
-
-		var b64 strings.Builder
-		lineCount := 0
-		for line := range rawCh {
-			b64.WriteString(strings.TrimSpace(line))
-			lineCount++
-			if lineCount%5000 == 0 {
-				outCh <- fmt.Sprintf("  receiving data... (%d KB)", b64.Len()*3/4/1024)
-			}
-		}
-
-		if b64.Len() == 0 {
-			outCh <- "ERROR: no dump data received"
-			return
-		}
-
-		outCh <- fmt.Sprintf("  received %d KB, decoding...", b64.Len()*3/4/1024)
-
-		decoded, err := base64.StdEncoding.DecodeString(b64.String())
-		if err != nil {
-			decoded, err = base64.RawStdEncoding.DecodeString(b64.String())
-			if err != nil {
-				outCh <- fmt.Sprintf("ERROR decoding dump: %v", err)
-				return
-			}
-		}
-
-		home, err := os.UserHomeDir()
-		if err != nil {
-			outCh <- fmt.Sprintf("ERROR getting home dir: %v", err)
-			return
-		}
-		downloadsDir := filepath.Join(home, "Downloads")
-		_ = os.MkdirAll(downloadsDir, 0o755)
-
-		ts := time.Now().Format("20060102_150405")
-		outPath := filepath.Join(downloadsDir, fmt.Sprintf("%s_%s.sql.gz", dbName, ts))
-
-		if err := os.WriteFile(outPath, decoded, 0o644); err != nil {
-			outCh <- fmt.Sprintf("ERROR saving file: %v", err)
-			return
-		}
-
-		sizeMB := float64(len(decoded)) / 1024 / 1024
-		outCh <- fmt.Sprintf("Saved to: %s (%.2f MB)", outPath, sizeMB)
-	}()
-
-	return outCh, nil
+// DumpMySQLDatabase streams mysqldump (gzipped in the container) to
+// ~/Downloads/<db>_<timestamp>.sql.gz.
+func DumpMySQLDatabase(r Runner, containerID, user, password, dbName string) (<-chan string, func(), error) {
+	dump := mysqlDump + " --no-tablespaces --single-transaction -u " + shellQuote(user) + " " + shellQuote(dbName)
+	hc := ExecStreamScript(containerID, gzipPipe(dump), mysqlSecrets(password)...)
+	name := fmt.Sprintf("%s_%s.sql.gz", safeFileName(dbName), timestamp())
+	return download(r, hc, "Starting mysqldump...", name, nil)
 }

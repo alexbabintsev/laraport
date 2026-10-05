@@ -137,6 +137,17 @@ laradok tries auth methods in this order:
 2. `ssh-agent` (via `SSH_AUTH_SOCK`)
 3. Standard key files: `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.ssh/id_ecdsa`, etc.
 
+### Host key verification
+
+Server host keys are checked against `~/.ssh/known_hosts` (the same file OpenSSH uses), with `accept-new` semantics:
+
+- a server you have never connected to is trusted on first use and its key is recorded;
+- a server whose key **differs** from the recorded one is refused with a "host key mismatch" error — that is what a man-in-the-middle attack looks like. If the server was legitimately reinstalled, remove the old entry with `ssh-keygen -R <host>` (or `ssh-keygen -R '[host]:port'`).
+
+### Connection drops
+
+A dropped connection (network change, laptop sleep, server restart) is detected — via SSH keepalives every 30 s while idle, and a 10 s limit on opening a session — and the next action transparently reconnects. There is no need to go back to the server list.
+
 ---
 
 ## Usage
@@ -205,12 +216,14 @@ Every destructive command shows a **confirmation screen** with the exact command
 Select a container running PostgreSQL, MySQL, MariaDB, Percona Server, or SQLite from the container list, then choose **Database** from the main menu. The engine is detected automatically:
 
 - `psql` → **PostgreSQL** (wins if multiple clients are present)
-- `mysql` → **MySQL**, or **MariaDB** / **Percona** if the client version string identifies that distribution
+- `mysql` (or `mariadb`, the only client in MariaDB 11+ images) → **MySQL**, or **MariaDB** / **Percona** if the client version string identifies that distribution
 - `sqlite3` → **SQLite** (used only when no server client is present)
 
-MariaDB and Percona reuse the MySQL client, `information_schema`, and `mysqldump`, so they share the same actions as MySQL — only the engine label differs.
+MariaDB and Percona reuse the MySQL client, `information_schema`, and `mysqldump` (`mariadb` / `mariadb-dump` where the `mysql*` names are missing), so they share the same actions as MySQL — only the engine label differs.
 
-For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For the **MySQL family** (MySQL / MariaDB / Percona), it prefers `root` with `MYSQL_ROOT_PASSWORD`, otherwise `MYSQL_USER` / `MYSQL_PASSWORD`. **SQLite** needs no credentials — laradok scans the app root (e.g. `database/`, `storage/`) for `*.sqlite`, `*.sqlite3`, and `*.db` files and lists each file as a database.
+Passwords are never put on a command line (where any user on the host could read them with `ps`): laradok writes them to the command's stdin and the container-side shell exports them as `PGPASSWORD` / `MYSQL_PWD` / `REDISCLI_AUTH` just for that command.
+
+For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For the **MySQL family** (MySQL / MariaDB / Percona), it prefers `root` with `MYSQL_ROOT_PASSWORD` (or `MARIADB_ROOT_PASSWORD`), otherwise `MYSQL_USER` / `MYSQL_PASSWORD` (or the `MARIADB_*` equivalents). **SQLite** needs no credentials — laradok scans the app root (e.g. `database/`, `storage/`) for `*.sqlite`, `*.sqlite3`, and `*.db` files and lists each file as a database.
 
 System databases are hidden from the list (PostgreSQL: `postgres`, `template0`, `template1`; MySQL family: `information_schema`, `performance_schema`, `mysql`, `sys`).
 
@@ -285,7 +298,7 @@ SQLite is file-based, so its actions run against the selected `.sqlite` file via
 
 ## Redis
 
-Select a container with the `redis-cli` client, then choose **Redis** from the main menu. laradok auto-detects the password from `REDIS_PASSWORD` (or the credentials in `REDIS_URL`) and runs every command as `docker exec <container> redis-cli [-a <password>] …`.
+Select a container with the `redis-cli` client, then choose **Redis** from the main menu. laradok auto-detects the password from `REDIS_PASSWORD` (or the credentials in `REDIS_URL`) and runs every command as `redis-cli …` inside the container, passing the password through the `REDISCLI_AUTH` environment variable (not `-a`, which would expose it in process listings).
 
 The screen offers curated, read-only commands grouped by purpose:
 
@@ -301,7 +314,7 @@ Key listing uses `redis-cli --scan` (non-blocking) rather than `KEYS *`, so it i
 
 ## MongoDB
 
-Select a container with the `mongosh` (preferred) or legacy `mongo` shell, then choose **MongoDB** from the main menu. laradok auto-detects root credentials from `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` (or the credentials in `MONGO_URL` / `MONGODB_URI`) and runs each command as `docker exec <container> mongosh [-u … -p … --authenticationDatabase admin] --quiet --eval '<js>'`.
+Select a container with the `mongosh` (preferred) or legacy `mongo` shell, then choose **MongoDB** from the main menu. laradok auto-detects root credentials from `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` (or the credentials in `MONGO_URL` / `MONGODB_URI`) and runs each command as `mongosh --quiet --eval '<js>'` inside the container. With `mongosh` the credentials are read from the environment by the script itself (`db.getSiblingDB('admin').auth(…)`), so they never appear on a command line; the legacy `mongo` shell cannot do that and falls back to `-u`/`-p`. `mongodump` gets its password from a private `--config` file that is removed afterwards.
 
 Commands are curated JavaScript expressions grouped by purpose:
 
@@ -325,14 +338,15 @@ laradok/
 │   ├── connection/      # SSHClient and LocalClient implementing the Runner interface
 │   ├── docker/          # Docker/psql command builders, log tailing, DB introspection
 │   ├── msgs/            # Bubble Tea message types for screen navigation and streaming
-│   ├── tui/
-│   │   ├── model.go     # Root App model — screen stack, async orchestration
-│   │   ├── keys.go      # Key bindings
-│   │   └── screens/     # Individual TUI screens
-│   └── dbg/             # Debug logging (conditional)
+│   └── tui/
+│       ├── model.go     # Root App model — screen stack, async orchestration
+│       ├── keys.go      # Key bindings
+│       └── screens/     # Individual TUI screens
 ```
 
-The `Runner` interface (`RunCommand`, `StreamCommand`, `InteractiveCommand`, `TailFile`) is implemented by both `SSHClient` and `LocalClient`, making all features work identically on local and remote Docker hosts.
+The `Runner` interface (`RunCommand`, `RunOutput`, `StreamCommand`, `InteractiveCommand`, `StartCommand`) is implemented by both `SSHClient` and `LocalClient` on top of one small transport primitive, making all features work identically on local and remote Docker hosts.
+
+Every command that runs inside a container is built by `docker.ExecShCmd` / `ExecStreamScript`: the script is passed to `sh -c` as one single-quoted word, so the host shell never expands anything in it, and every embedded value (paths, DB names) is quoted individually. Streams that can be cancelled run as a background job inside the container that is terminated when laradok closes its stdin, so leaving a screen really stops `tail -f`, a long query or a dump on the server.
 
 ---
 
@@ -340,11 +354,11 @@ The `Runner` interface (`RunCommand`, `StreamCommand`, `InteractiveCommand`, `Ta
 
 Available from the main menu on any Laravel container. Shows the size of `storage/` before transferring, then:
 
-1. Runs `tar -czf - storage/ | base64 -w 76` inside the container (no temp files on server)
-2. Streams base64 lines to the local machine
-3. Decodes and writes to `~/Downloads/<container>_storage_<timestamp>.tar.gz`
+1. Runs `tar -czf - storage/` inside the container (no temp files on server)
+2. Streams the raw archive bytes straight to disk (constant memory, no base64 overhead)
+3. Saves it as `~/Downloads/<container>_storage_<timestamp>.tar.gz` (mode `0600`) — only once the transfer has completed successfully; a failed or cancelled transfer (press `esc`) leaves nothing behind
 
-Progress is shown line-by-line in the output screen.
+Progress is shown as a single `received N MB` counter. Files that change while being archived (e.g. a live `laravel.log`) are archived anyway and reported as warnings.
 
 ---
 
@@ -354,7 +368,7 @@ Available from the main menu on **any** container, rooted at the filesystem root
 
 - Lists directories first, then files, each with its size — directories sized recursively with `du -sb` (falls back to `du -sk` on BusyBox).
 - `↑↓` to move, `enter`/`→` to open a directory **or view a file in the log viewer** (scroll, tail, lazy-load earlier lines), `←`/`backspace` to go up, `esc` to leave the browser at the root.
-- Press `d` on any file or directory to archive and download it the same way as **Download Storage**: `tar -czf - | base64` streamed to `~/Downloads/<container>_<name>_<timestamp>.tar.gz`. No temp files are created on the server, so nothing is left behind after the transfer.
+- Press `d` on any file or directory to archive and download it the same way as **Download Storage**: `tar -czf -` streamed to `~/Downloads/<container>_<name>_<timestamp>.tar.gz`. No temp files are created on the server, so nothing is left behind after the transfer.
 
 ---
 
@@ -362,5 +376,7 @@ Available from the main menu on **any** container, rooted at the filesystem root
 
 - No telemetry or network calls except to your configured servers
 - SSH credentials stay local; only Docker and psql commands are executed on remote hosts
-- SQL history is stored unencrypted at `~/.config/laradok/sql_history.json`
-- Dump files are written to `~/Downloads/` and never transmitted elsewhere
+- SQL history is stored unencrypted (mode `0600`) at `~/.config/laradok/sql_history.json`
+- Dump files are written to `~/Downloads/` with mode `0600` and never transmitted elsewhere
+- `config.yaml` is rewritten with mode `0600` when edited from the UI, since it may contain key passphrases
+- Database passwords are passed to the container over stdin, never as command-line arguments

@@ -32,6 +32,7 @@ type MainMenuScreen struct {
 	loading         bool
 	dbEngine        docker.DBEngine
 	mongoBin        string
+	probeErr        string // capability probe failure (e.g. container not running)
 	width           int
 	height          int
 }
@@ -145,6 +146,10 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.loading = false
 		s.dbEngine = msg.Caps.DBEngine()
 		s.mongoBin = msg.Caps.MongoBin
+		s.probeErr = ""
+		if msg.Err != nil {
+			s.probeErr = msg.Err.Error()
+		}
 		s.list = buildMenuList(s.container, s.containerCfg, msg.Caps, s.width, s.height)
 		return s, nil
 
@@ -235,10 +240,10 @@ func (s *MainMenuScreen) View() string {
 		fmt.Sprintf("%s %s  ",
 			styles.DimStyle.Render("container:"),
 			styles.BreadcrumbActive.Render(s.container.Name),
-		)+
-			styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" select  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		) +
+			styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " select  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	if s.loading {
@@ -249,5 +254,9 @@ func (s *MainMenuScreen) View() string {
 		return styles.PinToBottom(s.height, content, help)
 	}
 
+	if s.probeErr != "" {
+		errLine := styles.ErrorStyle.Width(s.width - 4).Render("Could not inspect the container: " + s.probeErr)
+		return styles.PinToBottom(s.height, lipgloss.JoinVertical(lipgloss.Left, s.list.View(), errLine), help)
+	}
 	return styles.PinToBottom(s.height, s.list.View(), help)
 }

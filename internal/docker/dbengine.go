@@ -1,7 +1,5 @@
 package docker
 
-import "fmt"
-
 // DBEngine identifies which database server runs in a container.
 type DBEngine string
 
@@ -41,19 +39,16 @@ func (e DBEngine) UsesCredentials() bool {
 	return e != EngineSQLite
 }
 
-// DBExecHostCmd builds the host shell command that runs a single SQL statement
-// against the given database, formatted as a readable table, for the engine.
-func DBExecHostCmd(engine DBEngine, containerID, user, password, dbName, sql string) string {
-	if engine == EngineSQLite {
+// DBExecHostCmd builds the command that runs a single SQL statement against
+// the given database, formatted as a readable table, for the engine.
+func DBExecHostCmd(engine DBEngine, containerID, user, password, dbName, sql string) HostCommand {
+	switch {
+	case engine == EngineSQLite:
 		// For SQLite, dbName is the absolute path to the database file.
 		return SQLiteExecCmd(containerID, dbName, sql)
-	}
-	if engine.IsMySQLFamily() {
+	case engine.IsMySQLFamily():
 		return MySQLExecCmd(containerID, user, password, dbName, sql)
+	default:
+		return PostgresExecCmd(containerID, user, password, dbName, sql)
 	}
-	return fmt.Sprintf(
-		`docker exec -e PGPASSWORD=%s -e PGUSER=%s %s psql -d %s -c %s`,
-		ShellQuote(password), ShellQuote(user), shellQuote(containerID),
-		ShellQuote(dbName), ShellQuote(sql),
-	)
 }

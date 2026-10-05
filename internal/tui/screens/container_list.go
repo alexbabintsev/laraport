@@ -160,8 +160,9 @@ func (s *ContainerListScreen) Init() tea.Cmd {
 }
 
 func (s *ContainerListScreen) loadContainers() tea.Cmd {
+	runner := s.runner
 	return func() tea.Msg {
-		containers, err := docker.ListContainers(s.runner)
+		containers, err := docker.ListContainers(runner)
 		return msgs.ContainersLoadedMsg{Containers: containers, Err: err}
 	}
 }
@@ -351,8 +352,8 @@ func (s *ContainerListScreen) helpBar() string {
 		styles.StatusBarKey.Render("↑↓") + " navigate  " +
 			styles.StatusBarKey.Render("enter") + " select  " +
 			styles.StatusBarKey.Render("e") + " configure  " +
-				styles.StatusBarKey.Render("g") + " cleanup  " +
-				styles.StatusBarKey.Render("r") + " refresh  " +
+			styles.StatusBarKey.Render("g") + " cleanup  " +
+			styles.StatusBarKey.Render("r") + " refresh  " +
 			styles.StatusBarKey.Render("esc") + " back",
 	)
 }

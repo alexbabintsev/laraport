@@ -1,279 +1,339 @@
 package connection
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// SSHClient wraps an SSH connection to a remote server.
+const (
+	// maxSessions caps concurrent SSH sessions per connection (OpenSSH's
+	// default MaxSessions is 10).
+	maxSessions = 6
+	// sessionSlotTimeout is how long a command waits for a free session slot.
+	sessionSlotTimeout = 30 * time.Second
+	// dialTimeout bounds TCP connect plus the SSH handshake.
+	dialTimeout = 15 * time.Second
+	// sessionOpenTimeout bounds opening a session; a connection that cannot
+	// open one in time is considered dead and replaced.
+	sessionOpenTimeout = 10 * time.Second
+	// keepaliveInterval / keepaliveTimeout: how often the connection is probed
+	// while idle, and how long a probe may take before the connection is
+	// declared dead.
+	keepaliveInterval = 30 * time.Second
+	keepaliveTimeout  = 10 * time.Second
+)
+
+// ErrSessionsBusy is returned when no SSH session slot frees up in time.
+var ErrSessionsBusy = errors.New("all SSH sessions are busy")
+
+// SSHClient runs commands on a remote server over one SSH connection. The
+// connection is (re)established lazily: if it drops — network change, laptop
+// sleep, server restart — it is detected and the next command dials again.
 type SSHClient struct {
+	base
+
+	addr   string
+	config *ssh.ClientConfig
+	agent  net.Conn // ssh-agent socket, nil when not used
+	sem    chan struct{}
+
+	mu     sync.Mutex
 	client *ssh.Client
-	sem    chan struct{} // limits concurrent SSH sessions
+	closed bool
 }
 
-// ConnectSSH establishes an SSH connection using key auth (with ssh-agent fallback).
+// ConnectSSH connects to host:port with key auth (or ssh-agent when no key is
+// given) and verifies the host key against ~/.ssh/known_hosts (new hosts are
+// recorded on first use; a changed key is rejected).
 func ConnectSSH(host string, port int, user, keyPath, passphrase string) (*SSHClient, error) {
-	authMethods, err := buildAuthMethods(keyPath, passphrase)
+	khPath, err := defaultKnownHostsPath()
+	if err != nil {
+		return nil, err
+	}
+	return connectSSH(host, port, user, keyPath, passphrase, hostKeyPolicy{path: khPath})
+}
+
+func connectSSH(host string, port int, user, keyPath, passphrase string, policy hostKeyPolicy) (*SSHClient, error) {
+	auth, agentConn, err := buildAuthMethods(keyPath, passphrase)
 	if err != nil {
 		return nil, fmt.Errorf("building auth methods: %w", err)
 	}
-
-	knownHostsPath := os.ExpandEnv("$HOME/.ssh/known_hosts")
-	hostKeyCallback := ssh.InsecureIgnoreHostKey() //nolint:gosec // intentional for first-use, user controls config
-	if _, err := os.Stat(knownHostsPath); err == nil {
-		cb, err := knownhosts.New(knownHostsPath)
-		if err == nil {
-			hostKeyCallback = cb
+	hostKeyCallback, err := policy.callback()
+	if err != nil {
+		if agentConn != nil {
+			agentConn.Close()
 		}
+		return nil, err
 	}
 
-	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: hostKeyCallback,
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	c := &SSHClient{
+		addr: addr,
+		config: &ssh.ClientConfig{
+			User:              user,
+			Auth:              auth,
+			HostKeyCallback:   hostKeyCallback,
+			HostKeyAlgorithms: policy.algorithms(addr),
+			Timeout:           dialTimeout,
+		},
+		agent: agentConn,
+		sem:   make(chan struct{}, maxSessions),
 	}
+	c.base = base{sshTransport{c}}
 
-	addr := fmt.Sprintf("%s:%d", host, port)
-	client, err := ssh.Dial("tcp", addr, cfg)
+	// Connect eagerly so configuration/auth errors surface immediately.
+	if _, err := c.conn(); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+// Close closes the connection. Further commands fail.
+func (c *SSHClient) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	var err error
+	if c.client != nil {
+		err = c.client.Close()
+		c.client = nil
+	}
+	if c.agent != nil {
+		c.agent.Close()
+		c.agent = nil
+	}
+	return err
+}
+
+// conn returns the live connection, dialing a new one if there is none.
+func (c *SSHClient) conn() (*ssh.Client, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, errors.New("ssh client closed")
+	}
+	if c.client != nil {
+		return c.client, nil
+	}
+	cl, err := dial(c.addr, c.config)
+	if err != nil {
+		return nil, err
+	}
+	c.client = cl
+	go c.watch(cl)
+	return cl, nil
+}
+
+// dial opens a TCP connection and performs the SSH handshake, with the whole
+// exchange bounded by dialTimeout.
+func dial(addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	nc, err := net.DialTimeout("tcp", addr, dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s: %w", addr, err)
 	}
-	sem := make(chan struct{}, 6)
-	for i := range 6 {
-		_ = i
-		sem <- struct{}{}
+	if tc, ok := nc.(*net.TCPConn); ok {
+		tc.SetKeepAlive(true)                    //nolint:errcheck
+		tc.SetKeepAlivePeriod(keepaliveInterval) //nolint:errcheck
 	}
-	return &SSHClient{client: client, sem: sem}, nil
+	nc.SetDeadline(time.Now().Add(dialTimeout)) //nolint:errcheck
+	sc, chans, reqs, err := ssh.NewClientConn(nc, addr, config)
+	if err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("ssh handshake with %s: %w", addr, err)
+	}
+	nc.SetDeadline(time.Time{}) //nolint:errcheck
+	return ssh.NewClient(sc, chans, reqs), nil
 }
 
-// Close closes the underlying SSH connection.
-func (c *SSHClient) Close() error {
-	return c.client.Close()
-}
-
-// acquire blocks until a session slot is available.
-func (c *SSHClient) acquire() { <-c.sem }
-
-// release returns a session slot.
-func (c *SSHClient) release() { c.sem <- struct{}{} }
-
-// RunCommand runs a command on the remote host and returns combined stdout+stderr output.
-func (c *SSHClient) RunCommand(cmd string) (string, error) {
-	c.acquire()
-	sess, err := c.client.NewSession()
-	if err != nil {
-		c.release()
-		return "", fmt.Errorf("new ssh session: %w", err)
-	}
-	defer c.release()
-	defer sess.Close()
-
-	var buf bytes.Buffer
-	sess.Stdout = &buf
-	sess.Stderr = &buf
-
-	runErr := sess.Run(cmd)
-	return buf.String(), runErr
-}
-
-// StreamCommand runs a command and streams output line-by-line via the returned channel.
-// The channel is closed when the command finishes or stop is called.
-// stop blocks until the goroutine exits and the semaphore slot is released.
-func (c *SSHClient) StreamCommand(cmd string) (<-chan string, func(), error) {
-	c.acquire()
-	sess, err := c.client.NewSession()
-	if err != nil {
-		c.release()
-		return nil, nil, fmt.Errorf("new ssh session: %w", err)
-	}
-
-	pr, pw := io.Pipe()
-	sess.Stdout = pw
-	sess.Stderr = pw
-
-	// Attach a stdin pipe so we can signal EOF to the remote process.
-	// Commands that use "read; kill $PID" rely on this to terminate cleanly.
-	stdinPipe, err := sess.StdinPipe()
-	if err != nil {
-		c.release()
-		sess.Close()
-		pw.Close()
-		pr.Close()
-		return nil, nil, fmt.Errorf("ssh stdin pipe: %w", err)
-	}
-
-	ch := make(chan string, 64)
-	quit := make(chan struct{})
-	done := make(chan struct{})
-
-	var quitOnce sync.Once
-
-	stop := func() {
-		quitOnce.Do(func() { close(quit) })
-		// Close stdin first — this sends EOF to the remote shell's "read",
-		// which triggers "kill $PID" inside the container.
-		stdinPipe.Close()
-		sess.Close()
-		pw.Close()
-		<-done // wait for goroutine to finish and release semaphore
-	}
-
+// watch forgets cl once its transport dies and probes it periodically so a
+// silently dropped connection (NAT timeout, sleep) is noticed while idle.
+func (c *SSHClient) watch(cl *ssh.Client) {
+	dead := make(chan struct{})
 	go func() {
-		defer c.release()
-		defer close(done)
-		defer close(ch)
-
-		if err := sess.Start(cmd); err != nil {
-			pw.Close()
-			select {
-			case ch <- fmt.Sprintf("ERROR: %v", err):
-			case <-quit:
-			}
+		cl.Wait() //nolint:errcheck
+		close(dead)
+	}()
+	ticker := time.NewTicker(keepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-dead:
+			c.forget(cl)
 			return
-		}
-
-		// Close pw when the command finishes so the scanner gets EOF.
-		go func() {
-			sess.Wait() //nolint:errcheck
-			pw.Close()
-		}()
-
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			select {
-			case ch <- scanner.Text():
-			case <-quit:
-				return
+		case <-ticker.C:
+			if !ping(cl, keepaliveTimeout) {
+				cl.Close()
 			}
 		}
-	}()
-
-	return ch, stop, nil
+	}
 }
 
-// InteractiveCommand runs a command over SSH, streaming output and accepting stdin input.
-func (c *SSHClient) InteractiveCommand(cmd string) (<-chan string, chan<- string, func(), error) {
-	c.acquire()
-	sess, err := c.client.NewSession()
+// ping sends an OpenSSH keepalive request and reports whether the server
+// answered within timeout.
+func ping(cl *ssh.Client, timeout time.Duration) bool {
+	res := make(chan error, 1)
+	go func() {
+		_, _, err := cl.SendRequest("keepalive@openssh.com", true, nil)
+		res <- err
+	}()
+	select {
+	case err := <-res:
+		// Servers reply "failure" to unknown requests; any reply proves liveness.
+		return err == nil
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// forget drops cl if it is still the current connection.
+func (c *SSHClient) forget(cl *ssh.Client) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.client == cl {
+		c.client = nil
+	}
+}
+
+// newSession opens a session, replacing a dead connection once if needed.
+func (c *SSHClient) newSession() (*ssh.Session, error) {
+	cl, err := c.conn()
+	if err != nil {
+		return nil, err
+	}
+	sess, err := openSession(cl, sessionOpenTimeout)
+	if err == nil {
+		return sess, nil
+	}
+	var refused *ssh.OpenChannelError
+	if errors.As(err, &refused) {
+		// The server answered (e.g. MaxSessions reached): the connection is
+		// alive, so don't tear it down under the other sessions.
+		return nil, err
+	}
+	// The connection is unusable (closed, or hung after sleep): drop it and
+	// try once more on a fresh one.
+	cl.Close()
+	c.forget(cl)
+	cl, err = c.conn()
+	if err != nil {
+		return nil, fmt.Errorf("reconnecting: %w", err)
+	}
+	return openSession(cl, sessionOpenTimeout)
+}
+
+// openSession opens a session on cl, giving up after timeout.
+func openSession(cl *ssh.Client, timeout time.Duration) (*ssh.Session, error) {
+	type result struct {
+		s   *ssh.Session
+		err error
+	}
+	res := make(chan result, 1)
+	go func() {
+		s, err := cl.NewSession()
+		res <- result{s, err}
+	}()
+	select {
+	case r := <-res:
+		return r.s, r.err
+	case <-time.After(timeout):
+		go func() {
+			// Don't leak a session that opens after we gave up.
+			if r := <-res; r.s != nil {
+				r.s.Close()
+			}
+		}()
+		return nil, fmt.Errorf("opening ssh session: timed out after %s", timeout)
+	}
+}
+
+// acquire takes a session slot, waiting up to sessionSlotTimeout.
+func (c *SSHClient) acquire() error {
+	select {
+	case c.sem <- struct{}{}:
+		return nil
+	case <-time.After(sessionSlotTimeout):
+		return ErrSessionsBusy
+	}
+}
+
+func (c *SSHClient) release() { <-c.sem }
+
+type sshTransport struct{ c *SSHClient }
+
+func (t sshTransport) start(cmd string, stdin io.Reader, stdout, stderr io.Writer) (*handle, error) {
+	c := t.c
+	if err := c.acquire(); err != nil {
+		return nil, err
+	}
+	sess, err := c.newSession()
 	if err != nil {
 		c.release()
-		return nil, nil, nil, fmt.Errorf("new ssh session: %w", err)
+		return nil, fmt.Errorf("new ssh session: %w", err)
 	}
-
-	pr, pw := io.Pipe()
-	sess.Stdout = pw
-	sess.Stderr = pw
-
-	stdinPipe, err := sess.StdinPipe()
-	if err != nil {
-		sess.Close()
-		pw.Close()
-		pr.Close()
-		c.release()
-		return nil, nil, nil, fmt.Errorf("stdin pipe: %w", err)
-	}
-
+	sess.Stdin = stdin
+	sess.Stdout = stdout
+	sess.Stderr = stderr
 	if err := sess.Start(cmd); err != nil {
-		stdinPipe.Close()
 		sess.Close()
-		pw.Close()
-		pr.Close()
 		c.release()
-		return nil, nil, nil, fmt.Errorf("start command: %w", err)
+		return nil, fmt.Errorf("starting remote command: %w", err)
 	}
-
-	outCh := make(chan string, 64)
-	inCh := make(chan string, 16)
-	quit := make(chan struct{})
-	done := make(chan struct{})
-
-	var quitOnce sync.Once
-
-	stop := func() {
-		quitOnce.Do(func() { close(quit) })
-		stdinPipe.Close()
-		sess.Signal(ssh.SIGTERM) //nolint:errcheck
-		sess.Close()
-		pw.Close()
-		<-done
-	}
-
-	go func() {
-		defer stdinPipe.Close()
-		for line := range inCh {
-			fmt.Fprintln(stdinPipe, line) //nolint:errcheck
-		}
-	}()
-
-	go func() {
-		defer c.release()
-		defer close(done)
-		defer close(outCh)
-
-		go func() {
-			sess.Wait() //nolint:errcheck
-			pw.Close()
-		}()
-
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			select {
-			case outCh <- scanner.Text():
-			case <-quit:
-				return
-			}
-		}
-	}()
-
-	return outCh, inCh, stop, nil
+	var releaseOnce sync.Once
+	return &handle{
+		wait: func() error {
+			err := sess.Wait()
+			sess.Close()
+			releaseOnce.Do(c.release)
+			return err
+		},
+		kill: func() {
+			sess.Signal(ssh.SIGKILL) //nolint:errcheck // most servers ignore signals
+			sess.Close()
+		},
+	}, nil
 }
 
-func buildAuthMethods(keyPath, passphrase string) ([]ssh.AuthMethod, error) {
-	var methods []ssh.AuthMethod
-	var keyErrors []string
-
+// buildAuthMethods returns the auth methods for the connection and, when
+// ssh-agent is used, the agent socket (owned by the caller).
+func buildAuthMethods(keyPath, passphrase string) ([]ssh.AuthMethod, net.Conn, error) {
 	if keyPath != "" {
 		// Explicit key specified — use ONLY that key, skip agent entirely.
 		// This avoids MaxAuthTries failures when agent has many unrelated keys.
 		signer, err := loadKey(keyPath, passphrase)
 		if err != nil {
-			return nil, fmt.Errorf("loading key %s: %w", keyPath, err)
+			return nil, nil, fmt.Errorf("loading key %s: %w", keyPath, err)
 		}
-		methods = append(methods, ssh.PublicKeys(signer))
-		return methods, nil
+		return []ssh.AuthMethod{ssh.PublicKeys(signer)}, nil, nil
 	}
+
+	var methods []ssh.AuthMethod
+	var keyErrors []string
+	var agentConn net.Conn
 
 	// No key specified — try ssh-agent first, then auto-discover standard keys.
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		conn, err := net.Dial("unix", sock)
-		if err == nil {
-			agentClient := agent.NewClient(conn)
-			methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
+		if conn, err := net.Dial("unix", sock); err == nil {
+			agentConn = conn
+			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
 		}
 	}
 
 	home, _ := os.UserHomeDir()
-	standardKeys := []string{
-		filepath.Join(home, ".ssh", "id_ed25519"),
-		filepath.Join(home, ".ssh", "id_rsa"),
-		filepath.Join(home, ".ssh", "id_ecdsa"),
-		filepath.Join(home, ".ssh", "id_ecdsa_sk"),
-		filepath.Join(home, ".ssh", "id_ed25519_sk"),
-	}
-	for _, kp := range standardKeys {
-		if _, err := os.Stat(kp); os.IsNotExist(err) {
+	for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa", "id_ecdsa_sk", "id_ed25519_sk"} {
+		kp := filepath.Join(home, ".ssh", name)
+		if _, err := os.Stat(kp); err != nil {
 			continue
 		}
 		signer, err := loadKey(kp, passphrase)
@@ -286,12 +346,12 @@ func buildAuthMethods(keyPath, passphrase string) ([]ssh.AuthMethod, error) {
 
 	if len(methods) == 0 {
 		if len(keyErrors) > 0 {
-			return nil, fmt.Errorf("no usable SSH key found. Errors:\n  %s\nAdd 'passphrase:' to config or use ssh-agent",
+			return nil, nil, fmt.Errorf("no usable SSH key found. Errors:\n  %s\nAdd 'passphrase:' to config or use ssh-agent",
 				strings.Join(keyErrors, "\n  "))
 		}
-		return nil, fmt.Errorf("no SSH keys found — specify 'key:' in config or add keys to ssh-agent")
+		return nil, nil, fmt.Errorf("no SSH keys found — specify 'key:' in config or add keys to ssh-agent")
 	}
-	return methods, nil
+	return methods, agentConn, nil
 }
 
 // loadKey parses a private key file, trying with passphrase if the raw parse fails.

@@ -320,9 +320,9 @@ func (s *AutocompleteScreen) View() string {
 	)
 
 	groupStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F1C40F")).Bold(true)
-	cmdStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
-	descStyle  := lipgloss.NewStyle().Foreground(styles.ColorText)
-	selStyle   := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
+	cmdStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
+	descStyle := lipgloss.NewStyle().Foreground(styles.ColorText)
+	selStyle := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
 
 	nameWidth := 0
 	for _, c := range s.suggestions {
@@ -383,10 +383,10 @@ func (s *AutocompleteScreen) View() string {
 	listView := strings.Join(listLines, "\n")
 
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("↓/tab")+" navigate  "+
-			styles.StatusBarKey.Render("↑")+" up  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("↓/tab") + " navigate  " +
+			styles.StatusBarKey.Render("↑") + " up  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, inputArea, listView)
