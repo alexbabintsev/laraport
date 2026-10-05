@@ -44,8 +44,11 @@ func InteractiveShellCmd(t ShellTarget) *exec.Cmd {
 	if t.User != "" {
 		dest = t.User + "@" + t.Host
 	}
-	args = append(args, dest,
-		"docker", "exec", "-it", t.ContainerID, "sh", "-c", shellQuote(innerShellCmd),
+	// "--" ends option parsing so a host value starting with "-" cannot be
+	// read as an ssh option. The remote side joins the command words and
+	// hands them to a shell, so each word is quoted individually.
+	args = append(args, "--", dest,
+		"docker", "exec", "-it", shellQuote(t.ContainerID), "sh", "-c", shellQuote(innerShellCmd),
 	)
 	return exec.Command("ssh", args...)
 }

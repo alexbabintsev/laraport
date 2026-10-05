@@ -54,17 +54,14 @@ func (c ContainerCaps) DBEngine() DBEngine {
 // DetectCapabilities probes the container with a single sh -c command to check
 // for artisan, composer, npm, psql, and php in one round-trip.
 func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, error) {
-	root := defaultRootPath
-	if rootPath != "" {
-		root = strings.TrimRight(rootPath, "/")
-	}
+	root := appRoot(rootPath)
 
 	// Each check emits a tag if the binary/file exists. The Laravel/Composer
 	// file checks try the configured root and /app, a common alternate root
 	// (FrankenPHP/Octane images, some Sail setups).
 	script := fmt.Sprintf(
-		`if [ -f %s/artisan ]; then echo LARAVEL_ROOT=%s; elif [ -f /app/artisan ]; then echo LARAVEL_ROOT=/app; fi; `+
-			`(command -v composer >/dev/null 2>&1 || [ -f %s/composer.phar ] || [ -f /app/composer.phar ]) && echo HAS_COMPOSER; `+
+		`if [ -f %s ]; then echo LARAVEL_ROOT=%s; elif [ -f /app/artisan ]; then echo LARAVEL_ROOT=/app; fi; `+
+			`(command -v composer >/dev/null 2>&1 || [ -f %s ] || [ -f /app/composer.phar ]) && echo HAS_COMPOSER; `+
 			`command -v npm >/dev/null 2>&1 && echo HAS_NPM; `+
 			`command -v psql >/dev/null 2>&1 && echo HAS_POSTGRES; `+
 			`command -v mysql >/dev/null 2>&1 && echo HAS_MYSQL; `+
@@ -74,17 +71,12 @@ func DetectCapabilities(r Runner, containerID, rootPath string) (ContainerCaps, 
 			`if command -v mongosh >/dev/null 2>&1; then echo HAS_MONGOSH; elif command -v mongo >/dev/null 2>&1; then echo HAS_MONGO; fi; `+
 			`command -v php >/dev/null 2>&1 && echo HAS_PHP; `+
 			`true`,
-		root, root, root,
+		shellQuote(root+"/artisan"), shellQuote(root), shellQuote(root+"/composer.phar"),
 	)
-	cmd := fmt.Sprintf(`docker exec %s sh -c %s`, containerID, shellQuote(script))
+	cmd := ExecShCmd(containerID, script)
 
 	out, _ := r.RunCommand(cmd)
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 
 	caps := ContainerCaps{}
 	for _, line := range strings.Split(out, "\n") {

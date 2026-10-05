@@ -271,7 +271,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		runner := a.runner
 		containerID := a.container.ID
 		return a, func() tea.Msg {
-			fullCmd := fmt.Sprintf(`docker exec -i %s sh -c %q`, containerID, cmd)
+			fullCmd := docker.ExecShInteractiveCmd(containerID, cmd)
 			outCh, inCh, stop, err := runner.InteractiveCommand(fullCmd)
 			return msgs.RawCmdStartMsg{OutCh: outCh, InCh: inCh, Stop: stop, SessionID: sessionID, Err: err}
 		}
@@ -608,9 +608,11 @@ func (a *App) startCommand(msg msgs.PushOutputMsg) (<-chan string, error) {
 		return ch, err
 	}
 	if msg.RawCmd != "" {
-		return docker.ExecCustomCommand(a.runner, a.container.ID, msg.RawCmd)
+		ch, _, err := docker.ExecCustomCommand(a.runner, a.container.ID, a.containerCfg.RootPath, msg.RawCmd)
+		return ch, err
 	}
-	return docker.ExecArtisan(a.runner, a.container.ID, a.containerCfg.RootPath, msg.ArtisanCmd)
+	ch, _, err := docker.ExecArtisan(a.runner, a.container.ID, a.containerCfg.RootPath, msg.ArtisanCmd)
+	return ch, err
 }
 
 // startStorageDownloadCmd checks storage size then streams the download.

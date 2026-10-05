@@ -3,25 +3,20 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const defaultRootPath = "/var/www/html"
 
 func artisanPath(rootPath string) string {
-	if rootPath == "" {
-		return defaultRootPath + "/artisan"
-	}
-	return strings.TrimRight(rootPath, "/") + "/artisan"
+	return strings.TrimSuffix(appRoot(rootPath), "/") + "/artisan"
 }
 
 func logsDir(rootPath string) string {
-	if rootPath == "" {
-		return defaultRootPath + "/storage/logs"
-	}
-	return strings.TrimRight(rootPath, "/") + "/storage/logs"
+	return strings.TrimSuffix(appRoot(rootPath), "/") + "/storage/logs"
 }
 
 // Runner is an interface implemented by both SSHClient and LocalClient.
@@ -29,7 +24,6 @@ type Runner interface {
 	RunCommand(cmd string) (string, error)
 	StreamCommand(cmd string) (<-chan string, func(), error)
 	InteractiveCommand(cmd string) (<-chan string, chan<- string, func(), error)
-	TailFile(path string) (<-chan string, func(), error)
 }
 
 // Container represents a running Docker container.
@@ -42,63 +36,112 @@ type Container struct {
 	Ports  string // published ports, e.g. "0.0.0.0:8080->80/tcp"
 }
 
+// retryDelay is the pause between attempts of commands that are retried to
+// ride out transient docker/SSH hiccups.
+const retryDelay = 300 * time.Millisecond
+
+// runRetry runs cmd up to attempts times and returns the first non-empty
+// output (NUL-stripped and trimmed). A run that succeeds with empty output is
+// retried too. When every attempt fails it returns the last error; when the
+// command keeps succeeding with no output it returns "" and nil.
+func runRetry(r Runner, cmd string, attempts int) (string, error) {
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(retryDelay)
+		}
+		out, err := r.RunCommand(cmd)
+		out = strings.TrimSpace(stripNUL(out))
+		if err != nil {
+			lastErr = commandError(err, out)
+			continue
+		}
+		lastErr = nil
+		if out != "" {
+			return out, nil
+		}
+	}
+	return "", lastErr
+}
+
+// commandError wraps a command failure with its (trimmed) output, if any.
+func commandError(err error, out string) error {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n%s", err, out)
+}
+
 // ListContainers returns all containers on the target host, including stopped
 // ones (docker ps -a).
-// Retries up to 5 times, continuing as long as the result keeps growing — this handles
-// truncated SSH output right after connection open where docker ps output arrives partially.
+//
+// Output right after an SSH connection opens can arrive truncated; a truncated
+// line fails to parse as JSON, so the listing is retried (up to 5 times) until
+// every line parses, keeping the most complete result seen.
 func ListContainers(r Runner) ([]Container, error) {
-	format := `{"id":"{{.ID}}","name":"{{.Names}}","image":"{{.Image}}","state":"{{.State}}","status":"{{.Status}}","ports":"{{.Ports}}"}`
-	cmd := fmt.Sprintf(`docker ps -a --format '%s'`, format)
+	format := `{"id":{{json .ID}},"name":{{json .Names}},"image":{{json .Image}},"state":{{json .State}},"status":{{json .Status}},"ports":{{json .Ports}}}`
+	cmd := "docker ps -a --format " + shellQuote(format)
 
 	var best []Container
 	for attempt := 0; attempt < 5; attempt++ {
 		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(retryDelay)
 		}
 		out, err := r.RunCommand(cmd)
 		if err != nil {
-			return nil, fmt.Errorf("docker ps: %w\n%s", err, out)
+			return nil, fmt.Errorf("docker ps: %w", commandError(err, out))
 		}
-		// Strip null bytes that can appear in SSH output right after connection open
-		out = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, out)
-
-		var containers []Container
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			var c Container
-			if err := json.Unmarshal([]byte(line), &c); err != nil {
-				continue
-			}
-			c.Name = strings.TrimPrefix(c.Name, "/")
-			containers = append(containers, c)
-		}
-
+		containers, complete := parseContainers(out)
 		if len(containers) > len(best) {
 			best = containers
 		}
-
-		// Stop early only if we got a stable non-empty result on two consecutive equal reads.
-		// A simple heuristic: if result didn't grow from previous best and we have something, done.
-		if len(containers) > 0 && len(containers) == len(best) && attempt > 0 {
-			break
+		if complete {
+			return containers, nil
 		}
 	}
 	return best, nil
 }
 
-// ExecArtisan runs an artisan command inside a container and streams the output.
-func ExecArtisan(r Runner, containerID, rootPath, artisanCmd string) (<-chan string, error) {
-	cmd := fmt.Sprintf(`docker exec %s php %s %s`, containerID, artisanPath(rootPath), artisanCmd)
-	ch, _, err := r.StreamCommand(cmd)
-	return ch, err
+// parseContainers parses `docker ps --format '{{json-ish}}'` output, one JSON
+// object per line. complete is false when any non-empty line failed to parse
+// (i.e. the output looks truncated).
+func parseContainers(out string) (containers []Container, complete bool) {
+	complete = true
+	for _, line := range strings.Split(stripNUL(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var c Container
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			complete = false
+			continue
+		}
+		c.Name = strings.TrimPrefix(c.Name, "/")
+		containers = append(containers, c)
+	}
+	return containers, complete
+}
+
+// appRoot returns the app root inside the container with no trailing slash.
+func appRoot(rootPath string) string {
+	if rootPath == "" {
+		return defaultRootPath
+	}
+	if r := strings.TrimRight(rootPath, "/"); r != "" {
+		return r
+	}
+	return "/"
+}
+
+// ExecArtisan runs an artisan command inside a container and streams the
+// output. artisanCmd is the argument string as typed by the user; it is
+// interpreted by the shell inside the container (so quoting and pipes work
+// there), never by the host shell.
+func ExecArtisan(r Runner, containerID, rootPath, artisanCmd string) (<-chan string, func(), error) {
+	script := "php " + shellQuote(artisanPath(rootPath)) + " " + artisanCmd
+	return r.StreamCommand(ExecShCmd(containerID, script))
 }
 
 // ArtisanCommand holds an artisan command name and its description.
@@ -109,112 +152,79 @@ type ArtisanCommand struct {
 
 // ListArtisanCommands returns all available artisan commands with descriptions.
 func ListArtisanCommands(r Runner, containerID, rootPath string) ([]ArtisanCommand, error) {
-	cmd := fmt.Sprintf(`docker exec %s php %s list --raw --no-ansi 2>/dev/null`, containerID, artisanPath(rootPath))
-	var lastOut string
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		raw, err := r.RunCommand(cmd)
-		if err != nil {
-			continue
-		}
-		raw = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, raw)
-		lastOut = strings.TrimSpace(raw)
-		if lastOut != "" {
-			break
-		}
-	}
+	script := "php " + shellQuote(artisanPath(rootPath)) + " list --raw --no-ansi 2>/dev/null"
+	out, _ := runRetry(r, ExecShCmd(containerID, script), 3)
+	return parseArtisanCommands(out), nil
+}
+
+// parseArtisanCommands parses `artisan list --raw` output, where each line is
+// "command:name   Description text".
+func parseArtisanCommands(out string) []ArtisanCommand {
 	var cmds []ArtisanCommand
-	for _, line := range strings.Split(lastOut, "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		// Format: "command:name   Description text here"
-		// Split on 2+ spaces to separate name from description
-		idx := strings.Index(line, "  ")
-		if idx < 0 {
-			cmds = append(cmds, ArtisanCommand{Name: line})
-			continue
-		}
-		name := strings.TrimSpace(line[:idx])
-		desc := strings.TrimSpace(line[idx:])
-		if name != "" {
-			cmds = append(cmds, ArtisanCommand{Name: name, Desc: desc})
+		if c, ok := splitNameDesc(line); ok {
+			cmds = append(cmds, c)
 		}
 	}
-	return cmds, nil
+	return cmds
 }
+
+// splitNameDesc splits "name   description" on the first run of 2+ spaces.
+func splitNameDesc(line string) (ArtisanCommand, bool) {
+	idx := strings.Index(line, "  ")
+	if idx < 0 {
+		return ArtisanCommand{Name: line}, line != ""
+	}
+	name := strings.TrimSpace(line[:idx])
+	return ArtisanCommand{Name: name, Desc: strings.TrimSpace(line[idx:])}, name != ""
+}
+
+// composerInstallScript downloads composer.phar into the current directory,
+// verifying the installer against its published SHA-384 signature (the
+// procedure recommended on getcomposer.org) before running it.
+const composerInstallScript = `php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" && ` +
+	`php -r "copy('https://composer.github.io/installer.sig', 'composer-setup.sig');" && ` +
+	`php -r "if (hash_file('sha384', 'composer-setup.php') !== trim(file_get_contents('composer-setup.sig'))) { fwrite(STDERR, 'composer installer signature mismatch' . PHP_EOL); exit(1); }" && ` +
+	`php composer-setup.php --quiet; rc=$?; rm -f composer-setup.php composer-setup.sig; exit $rc`
 
 // resolveComposer returns the shell invocation for composer inside the container.
 // It prefers the system `composer` binary. If not found, it ensures composer.phar
-// exists in root (downloading it if needed) and returns "php <root>/composer.phar".
+// exists in root (downloading it if needed) and returns "php '<root>/composer.phar'".
+// The returned invocation is already shell-quoted for use inside the container.
 func resolveComposer(r Runner, containerID, root string) (string, error) {
-	// Check for system composer
-	check, _ := r.RunCommand(fmt.Sprintf(`docker exec %s sh -c "command -v composer 2>/dev/null"`, containerID))
-	if strings.TrimSpace(check) != "" {
+	check, _ := r.RunCommand(ExecShCmd(containerID, "command -v composer 2>/dev/null"))
+	if strings.TrimSpace(stripNUL(check)) != "" {
 		return "composer", nil
 	}
 
 	pharPath := root + "/composer.phar"
-
-	// Check if composer.phar already exists
-	exist, _ := r.RunCommand(fmt.Sprintf(`docker exec %s sh -c "test -f %s && echo yes"`, containerID, pharPath))
-	if strings.TrimSpace(exist) != "yes" {
-		// Download composer.phar
-		dl := fmt.Sprintf(
-			`docker exec %s sh -c "cd %s && php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\" && php composer-setup.php --quiet && rm composer-setup.php"`,
-			containerID, root,
-		)
-		if _, err := r.RunCommand(dl); err != nil {
-			return "", fmt.Errorf("downloading composer.phar: %w", err)
+	exist, _ := r.RunCommand(ExecShCmd(containerID, "test -f "+shellQuote(pharPath)+" && echo yes"))
+	if strings.TrimSpace(stripNUL(exist)) != "yes" {
+		dl := "cd " + shellQuote(root) + " && " + composerInstallScript
+		if out, err := r.RunCommand(ExecShCmd(containerID, dl)); err != nil {
+			return "", fmt.Errorf("downloading composer.phar: %w", commandError(err, out))
 		}
 	}
 
-	return "php " + pharPath, nil
+	return "php " + shellQuote(pharPath), nil
 }
 
 // ListComposerCommands returns available composer commands with descriptions.
-// Also returns the resolved composer binary string (e.g. "composer" or "php /var/www/html/composer.phar").
+// Also returns the resolved composer invocation (e.g. "composer" or
+// "php '/var/www/html/composer.phar'").
 func ListComposerCommands(r Runner, containerID, rootPath string) ([]ArtisanCommand, string, error) {
-	root := defaultRootPath
-	if rootPath != "" {
-		root = strings.TrimRight(rootPath, "/")
-	}
-
+	root := appRoot(rootPath)
 	composerBin, err := resolveComposer(r, containerID, root)
 	if err != nil {
 		return nil, "", err
 	}
-
-	cmd := fmt.Sprintf(`docker exec %s sh -c "cd %s && %s list --no-ansi 2>/dev/null"`, containerID, root, composerBin)
-	var lastOut string
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		raw, err := r.RunCommand(cmd)
-		if err != nil {
-			continue
-		}
-		raw = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, raw)
-		lastOut = strings.TrimSpace(raw)
-		if lastOut != "" {
-			break
-		}
-	}
-	return parseComposerCommands(lastOut), composerBin, nil
+	script := "cd " + shellQuote(root) + " && " + composerBin + " list --no-ansi 2>/dev/null"
+	out, _ := runRetry(r, ExecShCmd(containerID, script), 3)
+	return parseComposerCommands(out), composerBin, nil
 }
 
 // parseComposerCommands parses `composer list` output into ArtisanCommand entries.
@@ -237,16 +247,8 @@ func parseComposerCommands(out string) []ArtisanCommand {
 		if line == "" {
 			continue
 		}
-		// Format: "  name    Description"  (leading spaces, then 2+ spaces between name and desc)
-		idx := strings.Index(line, "  ")
-		if idx < 0 {
-			cmds = append(cmds, ArtisanCommand{Name: line})
-			continue
-		}
-		name := strings.TrimSpace(line[:idx])
-		desc := strings.TrimSpace(line[idx:])
-		if name != "" {
-			cmds = append(cmds, ArtisanCommand{Name: name, Desc: desc})
+		if c, ok := splitNameDesc(line); ok {
+			cmds = append(cmds, c)
 		}
 	}
 	return cmds
@@ -254,33 +256,9 @@ func parseComposerCommands(out string) []ArtisanCommand {
 
 // ListNpmCommands returns available npm scripts from package.json with descriptions.
 func ListNpmCommands(r Runner, containerID, rootPath string) ([]ArtisanCommand, error) {
-	root := defaultRootPath
-	if rootPath != "" {
-		root = strings.TrimRight(rootPath, "/")
-	}
-	// Use npm run (lists scripts) and also check npm help for built-in commands
-	cmd := fmt.Sprintf(`docker exec %s sh -c "cd %s && npm run 2>/dev/null"`, containerID, root)
-	var lastOut string
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		raw, err := r.RunCommand(cmd)
-		if err != nil {
-			continue
-		}
-		raw = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, raw)
-		lastOut = strings.TrimSpace(raw)
-		if lastOut != "" {
-			break
-		}
-	}
-	return parseNpmCommands(lastOut), nil
+	script := "cd " + shellQuote(appRoot(rootPath)) + " && npm run 2>/dev/null"
+	out, _ := runRetry(r, ExecShCmd(containerID, script), 3)
+	return parseNpmCommands(out), nil
 }
 
 // parseNpmCommands parses `npm run` output into ArtisanCommand entries.
@@ -297,12 +275,8 @@ func parseNpmCommands(out string) []ArtisanCommand {
 		if line == "" || strings.HasPrefix(line, "Scripts available") || strings.HasPrefix(line, "Lifecycle scripts") {
 			continue
 		}
-		// Script name lines have no leading spaces in trimmed form and don't start with special chars
-		if !strings.HasPrefix(lines[i], "  ") {
-			continue
-		}
-		// Two-space indent = script name; four-space indent = script body
-		if strings.HasPrefix(lines[i], "    ") {
+		// Two-space indent = script name; four-space indent = script body.
+		if !strings.HasPrefix(lines[i], "  ") || strings.HasPrefix(lines[i], "    ") {
 			continue
 		}
 		name := line
@@ -312,18 +286,27 @@ func parseNpmCommands(out string) []ArtisanCommand {
 			desc = strings.TrimSpace(lines[i+1])
 			i++ // consume the body line
 		}
-		if name != "" {
-			cmds = append(cmds, ArtisanCommand{Name: name, Desc: desc})
-		}
+		cmds = append(cmds, ArtisanCommand{Name: name, Desc: desc})
 	}
 	return cmds
 }
 
-// ExecCustomCommand runs an arbitrary shell command inside a container and streams the output.
-func ExecCustomCommand(r Runner, containerID, command string) (<-chan string, error) {
-	cmd := fmt.Sprintf(`docker exec %s sh -c %q`, containerID, command)
-	ch, _, err := r.StreamCommand(cmd)
-	return ch, err
+// CustomCommandScript builds the in-container script for a user/config
+// command: it changes into workDir first (when given, ignoring a missing
+// directory so the container's WORKDIR is used instead) and then runs command
+// with the container's shell.
+func CustomCommandScript(workDir, command string) string {
+	if workDir == "" {
+		return command
+	}
+	return "cd " + shellQuote(workDir) + " 2>/dev/null; " + command
+}
+
+// ExecCustomCommand runs an arbitrary shell command inside a container and
+// streams the output. The command is interpreted by the container's shell, so
+// variables and $(…) expand inside the container, not on the host.
+func ExecCustomCommand(r Runner, containerID, workDir, command string) (<-chan string, func(), error) {
+	return r.StreamCommand(ExecShCmd(containerID, CustomCommandScript(workDir, command)))
 }
 
 // TailLaravelLog streams the Laravel log file from inside the container in real-time.
@@ -333,106 +316,75 @@ func TailLaravelLog(r Runner, containerID, rootPath string) (<-chan string, func
 
 // LogFileInfo holds metadata about a log file inside a container.
 type LogFileInfo struct {
-	Path      string
-	Size      int64
-	Lines     int
-	CreatedAt time.Time
+	Path       string
+	Size       int64
+	Lines      int
+	CreatedAt  time.Time
 	ModifiedAt time.Time
 }
 
-// ListLogFiles returns all files in the container's storage/logs directory.
-// Retries up to 3 times on empty result to handle transient docker/SSH issues.
-// sort is done in Go to avoid shell-pipe silently masking docker exec failures.
-func ListLogFiles(r Runner, containerID, rootPath string) ([]LogFileInfo, error) {
-	// Use stat to get size, modification time, and birth time (if available).
-	// Format: path|size|mtime_epoch|ctime_epoch
-	// We use find + stat; birth time (%W) may be 0 on Linux — fall back to ctime (%Z).
-	cmd := fmt.Sprintf(
-		`docker exec %s sh -c "find %s -type f | sort | xargs -I{} stat -c '{}|%%s|%%Y|%%W|%%Z' {} 2>/dev/null"`,
-		containerID, logsDir(rootPath),
-	)
-
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		out, err := r.RunCommand(cmd)
-		if err != nil {
-			return nil, fmt.Errorf("list log files: %w\n%s", err, out)
-		}
-		out = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, out)
-		var files []LogFileInfo
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			parts := strings.Split(line, "|")
-			if len(parts) != 5 {
-				// Fallback: just the path
-				files = append(files, LogFileInfo{Path: line})
-				continue
-			}
-			info := LogFileInfo{Path: parts[0]}
-			fmt.Sscanf(parts[1], "%d", &info.Size)
-			var mtime, btime, ctime int64
-			fmt.Sscanf(parts[2], "%d", &mtime)
-			fmt.Sscanf(parts[3], "%d", &btime)
-			fmt.Sscanf(parts[4], "%d", &ctime)
-			info.ModifiedAt = time.Unix(mtime, 0)
-			if btime > 0 {
-				info.CreatedAt = time.Unix(btime, 0)
-			} else {
-				info.CreatedAt = time.Unix(ctime, 0)
-			}
-			files = append(files, info)
-		}
-		if len(files) == 0 {
-			continue
-		}
-		// Fetch line counts for all files in one pass
-		paths := make([]string, len(files))
-		for i, f := range files {
-			paths[i] = f.Path
-		}
-		wcCmd := fmt.Sprintf(
-			`docker exec %s sh -c "wc -l %s 2>/dev/null"`,
-			containerID, strings.Join(paths, " "),
-		)
-		wcOut, _ := r.RunCommand(wcCmd)
-		wcOut = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, wcOut)
-		lineCounts := make(map[string]int)
-		for _, wl := range strings.Split(strings.TrimSpace(wcOut), "\n") {
-			wl = strings.TrimSpace(wl)
-			if wl == "" || strings.HasPrefix(wl, "total") {
-				continue
-			}
-			var n int
-			var p string
-			if _, err := fmt.Sscanf(wl, "%d %s", &n, &p); err == nil && p != "" {
-				lineCounts[p] = n
-			}
-		}
-		for i := range files {
-			files[i].Lines = lineCounts[files[i].Path]
-		}
-		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-		return files, nil
-	}
-	return nil, nil
+// fileStatsScript prints one "size|mtime|btime|ctime|lines|path" line for
+// every regular file matched by `find <findArgs>`, sorted by path. The path
+// comes last so a '|' inside a file name cannot shift the other fields.
+// findArgs must already be shell-quoted where needed.
+func fileStatsScript(findArgs string) string {
+	return `find ` + findArgs + ` 2>/dev/null | sort | while IFS= read -r f; do ` +
+		`s=$(stat -c '%s|%Y|%W|%Z' "$f" 2>/dev/null) || s='0|0|0|0'; ` +
+		`n=$(wc -l < "$f" 2>/dev/null) || n=0; ` +
+		`printf '%s|%s|%s\n' "$s" "$(echo $n)" "$f"; done`
 }
 
+// parseFileStats parses fileStatsScript output.
+func parseFileStats(out string) []LogFileInfo {
+	var files []LogFileInfo
+	for _, line := range strings.Split(stripNUL(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 6)
+		if len(parts) != 6 || parts[5] == "" {
+			continue
+		}
+		info := LogFileInfo{Path: parts[5]}
+		info.Size, _ = strconv.ParseInt(parts[0], 10, 64)
+		mtime, _ := strconv.ParseInt(parts[1], 10, 64)
+		btime, _ := strconv.ParseInt(parts[2], 10, 64)
+		ctime, _ := strconv.ParseInt(parts[3], 10, 64)
+		info.Lines, _ = strconv.Atoi(strings.TrimSpace(parts[4]))
+		info.ModifiedAt = time.Unix(mtime, 0)
+		// Birth time (%W) is 0 or unsupported on many filesystems — fall back to ctime.
+		if btime > 0 {
+			info.CreatedAt = time.Unix(btime, 0)
+		} else {
+			info.CreatedAt = time.Unix(ctime, 0)
+		}
+		files = append(files, info)
+	}
+	return files
+}
+
+// ListLogFiles returns all files in the container's storage/logs directory
+// with their size, timestamps and line counts, gathered in a single round-trip.
+// Retries up to 3 times on empty result to handle transient docker/SSH issues.
+func ListLogFiles(r Runner, containerID, rootPath string) ([]LogFileInfo, error) {
+	script := fileStatsScript(shellQuote(logsDir(rootPath)) + " -type f")
+	out, err := runRetry(r, ExecShCmd(containerID, script), 3)
+	if err != nil {
+		return nil, fmt.Errorf("list log files: %w", err)
+	}
+	return parseFileStats(out), nil
+}
+
+// LogChunkSize is the number of lines loaded per lazy log chunk.
 const LogChunkSize = 1000
+
+// tailFollowScript follows path from inside the container. The shell reads
+// stdin so that closing our stdin pipe causes an EOF on read, which then
+// kills tail.
+func tailFollowScript(path string, initialLines int) string {
+	return fmt.Sprintf(`tail -n %d -f %s & PID=$!; read X; kill $PID`, initialLines, shellQuote(path))
+}
 
 // TailLogFile loads the last LogChunkSize lines of a file as an initial batch,
 // then follows new lines in real-time. Returns the output channel, a stop func,
@@ -441,13 +393,8 @@ func TailLogFile(r Runner, containerID, filePath string) (<-chan string, func(),
 	// 1. Count total lines
 	total, err := CountFileLines(r, containerID, filePath)
 	if err != nil || total == 0 {
-		// Fallback: stream with tail -f. The shell reads stdin so that closing
-		// the SSH stdin pipe causes an EOF on read, which then kills tail.
-		cmd := fmt.Sprintf(
-			`docker exec -i %s sh -c 'tail -n %d -f %s & PID=$!; read X; kill $PID'`,
-			containerID, LogChunkSize, filePath,
-		)
-		ch, stop, err := r.StreamCommand(cmd)
+		// Fallback: plain tail -f with the last chunk as initial output.
+		ch, stop, err := r.StreamCommand(ExecShInteractiveCmd(containerID, tailFollowScript(filePath, LogChunkSize)))
 		if err != nil {
 			return nil, nil, 0, 0, err
 		}
@@ -464,61 +411,57 @@ func TailLogFile(r Runner, containerID, filePath string) (<-chan string, func(),
 		return nil, nil, 0, 0, err
 	}
 
-	// 3. Start tail -f -n 0 (follow only, no initial output) for new lines.
-	// The shell reads stdin so that closing the SSH stdin pipe causes an EOF
-	// on read, which then kills tail inside the container.
-	cmd := fmt.Sprintf(
-		`docker exec -i %s sh -c 'tail -n 0 -f %s & PID=$!; read X; kill $PID'`,
-		containerID, filePath,
-	)
-	tailCh, tailStop, err := r.StreamCommand(cmd)
+	// 3. Follow new lines only.
+	tailCh, tailStop, err := r.StreamCommand(ExecShInteractiveCmd(containerID, tailFollowScript(filePath, 0)))
 	if err != nil {
 		return nil, nil, 0, 0, err
 	}
 
-	// 4. Merge: send initial lines first, then follow stream
+	// 4. Merge: send initial lines first, then the follow stream. quit unblocks
+	// the merger when the consumer stops reading before the stream ends.
 	ch := make(chan string, 128)
+	quit := make(chan struct{})
+	var once sync.Once
+	stop := func() {
+		once.Do(func() { close(quit) })
+		tailStop()
+	}
 	go func() {
 		defer close(ch)
 		for _, line := range initialLines {
-			ch <- line
+			select {
+			case ch <- line:
+			case <-quit:
+				return
+			}
 		}
 		for line := range tailCh {
-			ch <- line
+			select {
+			case ch <- line:
+			case <-quit:
+				return
+			}
 		}
 	}()
 
-	return ch, tailStop, total, topLine, nil
+	return ch, stop, total, topLine, nil
 }
 
 // CountFileLines returns the total number of lines in a file inside the container.
 // Retries up to 3 times to handle transient SSH issues.
 func CountFileLines(r Runner, containerID, filePath string) (int, error) {
-	cmd := fmt.Sprintf(`docker exec %s sh -c "wc -l < %s"`, containerID, filePath)
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		out, err := r.RunCommand(cmd)
-		if err != nil {
-			continue
-		}
-		out = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, out)
-		out = strings.TrimSpace(out)
-		var n int
-		if _, err := fmt.Sscanf(out, "%d", &n); err == nil && n > 0 {
-			return n, nil
-		}
+	out, err := runRetry(r, ExecShCmd(containerID, "wc -l < "+shellQuote(filePath)), 3)
+	if err != nil {
+		return 0, fmt.Errorf("count lines in %s: %w", filePath, err)
 	}
-	return 0, fmt.Errorf("failed to count lines in %s", filePath)
+	n, convErr := strconv.Atoi(out)
+	if convErr != nil || n <= 0 {
+		return 0, fmt.Errorf("failed to count lines in %s", filePath)
+	}
+	return n, nil
 }
 
-// LoadLogChunk reads lines [fromLine, fromLine+logChunkSize) from a file inside
+// LoadLogChunk reads lines [fromLine, fromLine+LogChunkSize) from a file inside
 // the container (1-based line numbers). Returns the lines and whether the start
 // of the file has been reached (fromLine <= 1).
 // Retries up to 3 times, keeping the result with the most lines.
@@ -526,26 +469,18 @@ func LoadLogChunk(r Runner, containerID, filePath string, fromLine int) ([]strin
 	if fromLine < 1 {
 		fromLine = 1
 	}
-	cmd := fmt.Sprintf(
-		`docker exec %s sh -c "sed -n '%d,%dp' %s"`,
-		containerID, fromLine, fromLine+LogChunkSize-1, filePath,
-	)
+	script := fmt.Sprintf(`sed -n '%d,%dp' %s`, fromLine, fromLine+LogChunkSize-1, shellQuote(filePath))
+	cmd := ExecShCmd(containerID, script)
 	var best []string
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(retryDelay)
 		}
 		out, err := r.RunCommand(cmd)
 		if err != nil {
 			continue
 		}
-		out = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, out)
-		out = strings.TrimRight(out, "\n")
+		out = strings.TrimRight(stripNUL(out), "\n")
 		if out == "" {
 			continue
 		}
@@ -569,15 +504,8 @@ func LoadLogChunk(r Runner, containerID, filePath string, fromLine int) ([]strin
 func TailDockerLogs(r Runner, containerID string) (<-chan string, func(), error) {
 	// The shell reads stdin so that closing the SSH stdin pipe causes an EOF
 	// on read, which then kills docker logs.
-	cmd := fmt.Sprintf(
-		`sh -c 'docker logs -f --tail 100 %s & PID=$!; read X; kill $PID'`,
-		containerID,
-	)
-	ch, stop, err := r.StreamCommand(cmd)
-	if err != nil {
-		return nil, nil, err
-	}
-	return ch, stop, nil
+	script := "docker logs -f --tail 100 " + shellQuote(containerID) + " & PID=$!; read X; kill $PID"
+	return r.StreamCommand(HostShCmd(script))
 }
 
 // HostLog represents a discovered log file on the host server.
@@ -594,98 +522,25 @@ type HostLog struct {
 // /var/log recursively for *.log files and common paths like syslog.
 // Retries up to 3 times to handle transient SSH issues.
 func DiscoverContainerLogs(r Runner, containerID string) ([]HostLog, error) {
-	cmd := fmt.Sprintf(
-		`docker exec %s sh -c "find /var/log -type f \( -name '*.log' -o -name 'syslog' \) 2>/dev/null | sort | xargs -I{} stat -c '{}|%%s|%%Y|%%W|%%Z' {} 2>/dev/null"`,
-		containerID,
-	)
-
-	var lastOut string
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(300 * time.Millisecond)
-		}
-		raw, _ := r.RunCommand(cmd)
-		raw = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, raw)
-		lastOut = strings.TrimSpace(raw)
-		if lastOut != "" {
-			break
-		}
-	}
+	script := fileStatsScript(`/var/log -type f \( -name '*.log' -o -name 'syslog' \)`)
+	out, _ := runRetry(r, ExecShCmd(containerID, script), 3)
 
 	var logs []HostLog
 	seen := make(map[string]bool)
-	for _, line := range strings.Split(lastOut, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, f := range parseFileStats(out) {
+		if seen[f.Path] {
 			continue
 		}
-		parts := strings.Split(line, "|")
-		var log HostLog
-		if len(parts) == 5 {
-			log.Path = parts[0]
-			fmt.Sscanf(parts[1], "%d", &log.Size)
-			var mtime, btime, ctime int64
-			fmt.Sscanf(parts[2], "%d", &mtime)
-			fmt.Sscanf(parts[3], "%d", &btime)
-			fmt.Sscanf(parts[4], "%d", &ctime)
-			log.ModifiedAt = time.Unix(mtime, 0)
-			if btime > 0 {
-				log.CreatedAt = time.Unix(btime, 0)
-			} else {
-				log.CreatedAt = time.Unix(ctime, 0)
-			}
-		} else {
-			log.Path = line
-		}
-		if log.Path == "" || seen[log.Path] {
-			continue
-		}
-		seen[log.Path] = true
-		log.Service = containerLogService(log.Path)
-		logs = append(logs, log)
+		seen[f.Path] = true
+		logs = append(logs, HostLog{
+			Service:    containerLogService(f.Path),
+			Path:       f.Path,
+			Size:       f.Size,
+			Lines:      f.Lines,
+			CreatedAt:  f.CreatedAt,
+			ModifiedAt: f.ModifiedAt,
+		})
 	}
-
-	if len(logs) == 0 {
-		return logs, nil
-	}
-
-	// Fetch line counts for all files in one pass
-	paths := make([]string, len(logs))
-	for i, l := range logs {
-		paths[i] = l.Path
-	}
-	wcCmd := fmt.Sprintf(
-		`docker exec %s sh -c "wc -l %s 2>/dev/null"`,
-		containerID, strings.Join(paths, " "),
-	)
-	wcOut, _ := r.RunCommand(wcCmd)
-	wcOut = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, wcOut)
-	lineCounts := make(map[string]int)
-	for _, wl := range strings.Split(strings.TrimSpace(wcOut), "\n") {
-		wl = strings.TrimSpace(wl)
-		if wl == "" || strings.HasPrefix(wl, "total") {
-			continue
-		}
-		var n int
-		var p string
-		if _, err := fmt.Sscanf(wl, "%d %s", &n, &p); err == nil && p != "" {
-			lineCounts[p] = n
-		}
-	}
-	for i := range logs {
-		logs[i].Lines = lineCounts[logs[i].Path]
-	}
-
 	return logs, nil
 }
 

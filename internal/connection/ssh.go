@@ -240,60 +240,6 @@ func (c *SSHClient) InteractiveCommand(cmd string) (<-chan string, chan<- string
 	return outCh, inCh, stop, nil
 }
 
-// TailFile streams a file in real-time (like tail -f) via the returned channel.
-// The channel is closed when ctx is cancelled or the SSH session ends.
-func (c *SSHClient) TailFile(path string) (<-chan string, func(), error) {
-	c.acquire()
-	sess, err := c.client.NewSession()
-	if err != nil {
-		c.release()
-		return nil, nil, fmt.Errorf("new ssh session: %w", err)
-	}
-
-	pr, pw := io.Pipe()
-	sess.Stdout = pw
-	sess.Stderr = pw
-
-	cmd := fmt.Sprintf("tail -f %s", path)
-	if err := sess.Start(cmd); err != nil {
-		sess.Close()
-		pw.Close()
-		pr.Close()
-		c.release()
-		return nil, nil, fmt.Errorf("start tail: %w", err)
-	}
-
-	ch := make(chan string, 128)
-	quit := make(chan struct{})
-	done := make(chan struct{})
-
-	var quitOnce sync.Once
-
-	stop := func() {
-		quitOnce.Do(func() { close(quit) })
-		sess.Signal(ssh.SIGTERM) //nolint:errcheck
-		sess.Close()
-		pw.Close()
-		<-done
-	}
-
-	go func() {
-		defer c.release()
-		defer close(done)
-		defer close(ch)
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			select {
-			case ch <- scanner.Text():
-			case <-quit:
-				return
-			}
-		}
-	}()
-
-	return ch, stop, nil
-}
-
 func buildAuthMethods(keyPath, passphrase string) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 	var keyErrors []string

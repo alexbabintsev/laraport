@@ -86,7 +86,7 @@ func DumpRedis(r Runner, containerID, password string) (<-chan string, error) {
 		`redis-cli %s--rdb /tmp/laradok-dump.rdb >/dev/null 2>&1 && base64 -w 76 /tmp/laradok-dump.rdb; rm -f /tmp/laradok-dump.rdb`,
 		auth,
 	)
-	cmd := fmt.Sprintf(`docker exec %s sh -c %s`, containerID, shellQuote(inner))
+	cmd := ExecShCmd(containerID, inner)
 	return streamBase64Dump(r, cmd, "Starting Redis RDB snapshot...", "redis", "rdb")
 }
 
@@ -104,6 +104,6 @@ func DumpMongo(r Runner, containerID, user, password string) (<-chan string, err
 		)
 	}
 	inner := fmt.Sprintf(`%s%s --archive --gzip 2>/dev/null | base64 -w 76`, dumpBin, auth)
-	cmd := fmt.Sprintf(`docker exec %s sh -c %s`, containerID, shellQuote(inner))
+	cmd := ExecShCmd(containerID, inner)
 	return streamBase64Dump(r, cmd, "Starting mongodump...", "mongo", "archive.gz")
 }

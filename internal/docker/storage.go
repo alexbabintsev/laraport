@@ -19,7 +19,7 @@ const StatusLinePrefix = "\x00status\x00"
 // StorageSize returns the human-readable size of the storage directory inside the container.
 func StorageSize(r Runner, containerID, rootPath string) (string, error) {
 	dir := storageDir(rootPath)
-	cmd := fmt.Sprintf(`docker exec %s sh -c "du -sh %s 2>/dev/null | cut -f1"`, containerID, dir)
+	cmd := ExecShCmd(containerID, "du -sh "+shellQuote(dir)+" 2>/dev/null | cut -f1")
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			time.Sleep(300 * time.Millisecond)
@@ -28,12 +28,7 @@ func StorageSize(r Runner, containerID, rootPath string) (string, error) {
 		if err != nil {
 			continue
 		}
-		out = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, out)
+		out = stripNUL(out)
 		size := strings.TrimSpace(out)
 		if size != "" {
 			return size, nil
@@ -53,12 +48,8 @@ func DownloadStorage(r Runner, containerID, containerName, rootPath string) (<-c
 	base := filepath.Base(strings.TrimRight(dir, "/"))
 
 	// -w 76 wraps base64 output at 76 chars per line so bufio.Scanner can read it.
-	cmd := fmt.Sprintf(
-		`docker exec %s sh -c 'tar -czf - -C %s %s 2>/tmp/_ld_err | base64 -w 76; cat /tmp/_ld_err >&2'`,
-		containerID,
-		shellQuote(parent),
-		shellQuote(base),
-	)
+	cmd := ExecShCmd(containerID,
+		"tar -czf - -C "+shellQuote(parent)+" "+shellQuote(base)+" 2>/tmp/_ld_err | base64 -w 76; cat /tmp/_ld_err >&2")
 	rawCh, _, err := r.StreamCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("storage archive: %w", err)
@@ -155,7 +146,7 @@ for e in * .[!.]* ..?*; do
 done
 exit 0`, shellQuote(path))
 
-	cmd := fmt.Sprintf(`docker exec %s sh -c %s`, containerID, shellQuote(script))
+	cmd := ExecShCmd(containerID, script)
 
 	// du/stat on some entries (e.g. /proc) may exit non-zero, so we don't treat a
 	// non-zero exit as fatal — the loop still prints valid lines for every entry.
@@ -171,12 +162,7 @@ exit 0`, shellQuote(path))
 			break
 		}
 	}
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 
 	var dirs, files []DirEntry
 	for _, line := range strings.Split(out, "\n") {
@@ -222,12 +208,8 @@ func DownloadPath(r Runner, containerID, containerName, path string) (<-chan str
 	parent := filepath.Dir(path)
 	base := filepath.Base(path)
 
-	cmd := fmt.Sprintf(
-		`docker exec %s sh -c 'tar -czf - -C %s %s 2>/tmp/_ld_err | base64 -w 76; cat /tmp/_ld_err >&2'`,
-		containerID,
-		shellQuote(parent),
-		shellQuote(base),
-	)
+	cmd := ExecShCmd(containerID,
+		"tar -czf - -C "+shellQuote(parent)+" "+shellQuote(base)+" 2>/tmp/_ld_err | base64 -w 76; cat /tmp/_ld_err >&2")
 	rawCh, _, err := r.StreamCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("archive %s: %w", path, err)
@@ -294,16 +276,5 @@ func DownloadPath(r Runner, containerID, containerName, path string) (<-chan str
 }
 
 func storageDir(rootPath string) string {
-	root := defaultRootPath
-	if rootPath != "" {
-		root = strings.TrimRight(rootPath, "/")
-	}
-	return root + "/storage"
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return strings.TrimSuffix(appRoot(rootPath), "/") + "/storage"
 }

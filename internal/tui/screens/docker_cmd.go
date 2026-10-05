@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alexbabintsev/laradok/internal/docker"
 	"github.com/alexbabintsev/laradok/internal/msgs"
 	"github.com/alexbabintsev/laradok/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
@@ -165,7 +166,7 @@ func (s *DockerCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if s.selected >= 0 && s.selected < len(s.cmds) {
 				dc := s.cmds[s.selected]
-				hostCmd := fmt.Sprintf(dc.cmd, s.containerName)
+				hostCmd := fmt.Sprintf(dc.cmd, docker.ShellQuote(s.containerName))
 				title := dc.label
 				return s, func() tea.Msg {
 					return msgs.PushOutputMsg{

@@ -12,10 +12,7 @@ import (
 // sqliteSearchDirs are the locations (relative to the app root, plus a couple
 // of absolute fallbacks) scanned for SQLite database files.
 func sqliteSearchDirs(rootPath string) []string {
-	root := defaultRootPath
-	if rootPath != "" {
-		root = strings.TrimRight(rootPath, "/")
-	}
+	root := appRoot(rootPath)
 	return []string{
 		root + "/database",
 		root + "/storage",
@@ -38,18 +35,13 @@ func ListSQLiteDatabases(r Runner, containerID, rootPath string) ([]string, erro
 		`find %s -maxdepth 3 -type f \( -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db' \) 2>/dev/null`,
 		strings.Join(quoted, " "),
 	)
-	cmd := fmt.Sprintf(`docker exec %s sh -c %s`, containerID, shellQuote(find))
+	cmd := ExecShCmd(containerID, find)
 
 	out, err := r.RunCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("find sqlite files: %w", err)
 	}
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 
 	var dbs []string
 	seen := map[string]bool{}
@@ -70,17 +62,14 @@ func SQLiteExecCmd(containerID, dbPath, sql string) string {
 	// -header -column renders aligned columns with a header row.
 	return fmt.Sprintf(
 		`docker exec %s sqlite3 -header -column %s %s`,
-		containerID, ShellQuote(dbPath), ShellQuote(sql),
+		shellQuote(containerID), ShellQuote(dbPath), ShellQuote(sql),
 	)
 }
 
 // DumpSQLiteDatabase runs `sqlite3 <file> .dump | gzip | base64`, reassembles
 // locally, and saves to ~/Downloads/<file>_<timestamp>.sql.gz.
 func DumpSQLiteDatabase(r Runner, containerID, dbPath string) (<-chan string, error) {
-	cmd := fmt.Sprintf(
-		`docker exec %s sh -c 'sqlite3 %s .dump | gzip | base64 -w 76'`,
-		containerID, shellQuote(dbPath),
-	)
+	cmd := ExecShCmd(containerID, "sqlite3 "+shellQuote(dbPath)+" .dump | gzip | base64 -w 76")
 	rawCh, _, err := r.StreamCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite3 .dump stream: %w", err)

@@ -12,17 +12,12 @@ import (
 // DetectMySQLCredentials reads MySQL credentials from container env.
 // Prefers MYSQL_USER/MYSQL_PASSWORD; falls back to root with MYSQL_ROOT_PASSWORD.
 func DetectMySQLCredentials(r Runner, containerID string) (user, password string, err error) {
-	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, containerID)
+	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, shellQuote(containerID))
 	out, err := r.RunCommand(cmd)
 	if err != nil {
 		return "", "", fmt.Errorf("docker inspect: %w", err)
 	}
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 
 	var mysqlUser, mysqlPass, rootPass string
 	for _, line := range strings.Split(out, "\n") {
@@ -60,7 +55,7 @@ func mysqlExec(containerID, user, password, dbName, sql string) string {
 	}
 	return fmt.Sprintf(
 		`docker exec -e MYSQL_PWD=%s %s mysql -u %s%s -e %s`,
-		shellQuote(password), containerID, shellQuote(user), db, shellQuote(sql),
+		shellQuote(password), shellQuote(containerID), shellQuote(user), db, shellQuote(sql),
 	)
 }
 
@@ -76,12 +71,7 @@ func ListMySQLDatabases(r Runner, containerID, user, password string) ([]string,
 		if err != nil {
 			continue
 		}
-		raw = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, raw)
+		raw = stripNUL(raw)
 		out = strings.TrimSpace(raw)
 		if out != "" {
 			break
@@ -111,7 +101,7 @@ func ListMySQLDatabases(r Runner, containerID, user, password string) ([]string,
 func MySQLExecCmd(containerID, user, password, dbName, sql string) string {
 	return fmt.Sprintf(
 		`docker exec -e MYSQL_PWD=%s %s mysql -u %s --table %s -e %s`,
-		ShellQuote(password), containerID, ShellQuote(user),
+		ShellQuote(password), shellQuote(containerID), ShellQuote(user),
 		ShellQuote(dbName), ShellQuote(sql),
 	)
 }
@@ -120,8 +110,9 @@ func MySQLExecCmd(containerID, user, password, dbName, sql string) string {
 // reassembles locally, and saves to ~/Downloads/<dbName>_<timestamp>.sql.gz.
 func DumpMySQLDatabase(r Runner, containerID, user, password, dbName string) (<-chan string, error) {
 	cmd := fmt.Sprintf(
-		`docker exec -e MYSQL_PWD=%s %s sh -c 'mysqldump --no-tablespaces --single-transaction -u %s %s | gzip | base64 -w 76'`,
-		shellQuote(password), containerID, shellQuote(user), shellQuote(dbName),
+		`docker exec -e MYSQL_PWD=%s %s sh -c %s`,
+		shellQuote(password), shellQuote(containerID),
+		shellQuote("mysqldump --no-tablespaces --single-transaction -u "+shellQuote(user)+" "+shellQuote(dbName)+" | gzip | base64 -w 76"),
 	)
 	rawCh, _, err := r.StreamCommand(cmd)
 	if err != nil {

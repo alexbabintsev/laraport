@@ -9,17 +9,12 @@ import (
 // (REDIS_PASSWORD, or the password embedded in REDIS_URL). Empty means
 // the server is unauthenticated.
 func DetectRedisPassword(r Runner, containerID string) (string, error) {
-	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, containerID)
+	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, shellQuote(containerID))
 	out, err := r.RunCommand(cmd)
 	if err != nil {
 		return "", fmt.Errorf("docker inspect: %w", err)
 	}
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 
 	var pass string
 	for _, line := range strings.Split(out, "\n") {
@@ -56,8 +51,8 @@ func RedisCLIPrefix(containerID, password string) string {
 		// --no-auth-warning suppresses the stderr notice about -a on the CLI.
 		return fmt.Sprintf(
 			`docker exec %s redis-cli --no-auth-warning -a %s`,
-			containerID, shellQuote(password),
+			shellQuote(containerID), shellQuote(password),
 		)
 	}
-	return fmt.Sprintf(`docker exec %s redis-cli`, containerID)
+	return fmt.Sprintf(`docker exec %s redis-cli`, shellQuote(containerID))
 }

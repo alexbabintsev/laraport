@@ -14,17 +14,12 @@ import (
 
 // DetectPostgresCredentials reads POSTGRES_USER and POSTGRES_PASSWORD from container env.
 func DetectPostgresCredentials(r Runner, containerID string) (user, password string, err error) {
-	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, containerID)
+	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, shellQuote(containerID))
 	out, err := r.RunCommand(cmd)
 	if err != nil {
 		return "", "", fmt.Errorf("docker inspect: %w", err)
 	}
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if k, v, ok := strings.Cut(line, "="); ok {
@@ -46,7 +41,7 @@ func DetectPostgresCredentials(r Runner, containerID string) (user, password str
 func ListDatabases(r Runner, containerID, user, password string) ([]string, error) {
 	cmd := fmt.Sprintf(
 		`docker exec -e PGPASSWORD=%s -e PGUSER=%s %s psql -lqt --no-align --field-separator '|'`,
-		shellQuote(password), shellQuote(user), containerID,
+		shellQuote(password), shellQuote(user), shellQuote(containerID),
 	)
 	var out string
 	for attempt := 0; attempt < 3; attempt++ {
@@ -57,12 +52,7 @@ func ListDatabases(r Runner, containerID, user, password string) ([]string, erro
 		if err != nil {
 			continue
 		}
-		raw = strings.Map(func(r rune) rune {
-			if r == 0 {
-				return -1
-			}
-			return r
-		}, raw)
+		raw = stripNUL(raw)
 		out = strings.TrimSpace(raw)
 		if out != "" {
 			break
@@ -100,7 +90,7 @@ func ListDatabases(r Runner, containerID, user, password string) ([]string, erro
 func ExecSQL(r Runner, containerID, user, password, dbName, sql string) (<-chan string, error) {
 	cmd := fmt.Sprintf(
 		`docker exec -e PGPASSWORD=%s %s psql -U %s -d %s -c %s`,
-		shellQuote(password), containerID,
+		shellQuote(password), shellQuote(containerID),
 		shellQuote(user), shellQuote(dbName), shellQuote(sql),
 	)
 	ch, _, err := r.StreamCommand(cmd)
@@ -111,7 +101,7 @@ func ExecSQL(r Runner, containerID, user, password, dbName, sql string) (<-chan 
 func ExecPsqlMeta(r Runner, containerID, user, password, dbName, metacmd string) (<-chan string, error) {
 	cmd := fmt.Sprintf(
 		`docker exec -e PGPASSWORD=%s %s psql -U %s -d %s -c %s`,
-		shellQuote(password), containerID,
+		shellQuote(password), shellQuote(containerID),
 		shellQuote(user), shellQuote(dbName),
 		shellQuote(metacmd),
 	)
@@ -139,26 +129,18 @@ func DumpDatabaseCustom(r Runner, containerID, user, password, dbName string) (<
 }
 
 func dumpDatabase(r Runner, containerID, user, password, dbName string, customFormat bool, inserts bool) (<-chan string, error) {
-	var cmd string
+	pipeline := "pg_dump --no-owner --no-acl | gzip | base64 -w 76"
 	if customFormat {
 		// -Fc produces a compressed binary archive — no need for gzip.
-		cmd = fmt.Sprintf(
-			`docker exec -e PGPASSWORD=%s -e PGUSER=%s -e PGDATABASE=%s %s sh -c 'pg_dump --no-owner --no-acl -Fc | base64 -w 76'`,
-			shellQuote(password), shellQuote(user), shellQuote(dbName), containerID,
-		)
+		pipeline = "pg_dump --no-owner --no-acl -Fc | base64 -w 76"
 	} else if inserts {
 		// --inserts --column-inserts: slower, more portable (INSERT statements instead of COPY).
-		cmd = fmt.Sprintf(
-			`docker exec -e PGPASSWORD=%s -e PGUSER=%s -e PGDATABASE=%s %s sh -c 'pg_dump --no-owner --no-acl --inserts --column-inserts | gzip | base64 -w 76'`,
-			shellQuote(password), shellQuote(user), shellQuote(dbName), containerID,
-		)
-	} else {
-		// -w 76 wraps base64 at 76 chars/line so bufio.Scanner can read each line.
-		cmd = fmt.Sprintf(
-			`docker exec -e PGPASSWORD=%s -e PGUSER=%s -e PGDATABASE=%s %s sh -c 'pg_dump --no-owner --no-acl | gzip | base64 -w 76'`,
-			shellQuote(password), shellQuote(user), shellQuote(dbName), containerID,
-		)
+		pipeline = "pg_dump --no-owner --no-acl --inserts --column-inserts | gzip | base64 -w 76"
 	}
+	cmd := fmt.Sprintf(
+		`docker exec -e PGPASSWORD=%s -e PGUSER=%s -e PGDATABASE=%s %s sh -c %s`,
+		shellQuote(password), shellQuote(user), shellQuote(dbName), shellQuote(containerID), shellQuote(pipeline),
+	)
 	rawCh, _, err := r.StreamCommand(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("pg_dump stream: %w", err)
@@ -258,12 +240,3 @@ func filterDumpLines(data []byte) []byte {
 	}
 	return filtered.Bytes()
 }
-
-// ShellQuote wraps s in single quotes, escaping internal single quotes.
-// Safe to use as an argument in shell commands parsed by sh.
-func ShellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-// shellQuote is an internal alias.
-func shellQuote(s string) string { return ShellQuote(s) }

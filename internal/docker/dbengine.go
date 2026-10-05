@@ -53,7 +53,7 @@ func DBExecHostCmd(engine DBEngine, containerID, user, password, dbName, sql str
 	}
 	return fmt.Sprintf(
 		`docker exec -e PGPASSWORD=%s -e PGUSER=%s %s psql -d %s -c %s`,
-		ShellQuote(password), ShellQuote(user), containerID,
+		ShellQuote(password), ShellQuote(user), shellQuote(containerID),
 		ShellQuote(dbName), ShellQuote(sql),
 	)
 }

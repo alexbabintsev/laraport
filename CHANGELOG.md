@@ -57,6 +57,9 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- **Commands run in the app root** — custom commands (config `commands:`) and the Artisan/Composer/Npm pickers now `cd` into the container's app root (configured or detected) before running, falling back to the image `WORKDIR` when it does not exist
+- **Log file list in one round-trip** — size, timestamps and line counts are gathered by a single in-container script instead of two
+- **Faster container list** — `docker ps` is no longer always run twice; it is retried only when the output looks truncated. Fields are emitted with `{{json …}}`, so names/statuses containing quotes no longer drop the container
 - **Laravel detection** — the capability probe now also looks for `artisan` (and `composer.phar`) in `/app`, not just the configured root / `/var/www/html`. When `artisan` is found at `/app` and no `root_path` is set in config, laradok adopts that root so artisan, logs and storage commands target the right directory.
 - **Download progress** — archive downloads (File Browser + Download Storage) now show a single `received N MB` counter that updates in place instead of flooding the output with one line per chunk
 - **PostgreSQL management** — full database browser accessible from the main menu
@@ -82,6 +85,15 @@ All notable changes to laradok are documented here.
 - Shell quoting bug in all psql/pg_dump commands: replaced `sh -c "PGPASSWORD='...' psql ..."` (broken double-quote nesting) with `docker exec -e PGPASSWORD=...` to inject credentials as environment variables — no shell interpolation of user-controlled values
 - `ListDatabases` parsing: `psql -lqt` ACL entries (e.g. `postgres=CTc/postgres`) were incorrectly parsed as database names; now requires `len(parts) >= 2` and rejects names containing `=` or `/`
 - `base64 -w 0` replaced with `base64 -w 76` in storage and pg_dump pipelines — `bufio.Scanner` has a 64 KB token limit and silently dropped single-line base64 output from large archives, causing "no data received" errors
+
+### Security
+- **Host command injection via container-controlled names** — log file paths, files picked in the file browser, SQLite paths, DB/user names and `root_path` were interpolated into `docker exec … sh -c "…"` without quoting, so a file named e.g. `x$(cmd).log` inside a container ran `cmd` on the host (or the SSH server) when the log list was opened. Every in-container script is now built by `docker.ExecShCmd`, which single-quotes both the container ID and the script, and every embedded value is quoted individually
+- **Raw / custom / config commands ran `$…` on the host** — they were wrapped with Go's `%q`, which does not escape `$` or backticks, so `echo $HOME` or `$(…)` expanded on the host. They now run verbatim in the container's shell
+- Artisan arguments are passed to the container's shell instead of the host shell (pipes and `;` now apply inside the container)
+- `composer.phar` auto-install verifies the installer's SHA-384 signature before running it
+- Terminal over SSH passes `--` before the destination so a host value cannot be read as an `ssh` option
+- Removed the unused `TailFile` runner method (it interpolated an unquoted path)
+
 
 ---
 

@@ -33,12 +33,7 @@ func ListContainerStats(r Runner) (map[string]ContainerStat, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker stats: %w\n%s", err, out)
 	}
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 
 	result := make(map[string]ContainerStat)
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {

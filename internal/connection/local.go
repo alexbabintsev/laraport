@@ -2,7 +2,6 @@ package connection
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"os/exec"
@@ -132,35 +131,3 @@ func (c *LocalClient) InteractiveCommand(cmd string) (<-chan string, chan<- stri
 	return outCh, inCh, stop, nil
 }
 
-// TailFile streams a file locally using tail -f.
-func (c *LocalClient) TailFile(path string) (<-chan string, func(), error) {
-	command := exec.Command("tail", "-f", path)
-
-	var buf bytes.Buffer
-	pr, pw := io.Pipe()
-	command.Stdout = pw
-	command.Stderr = &buf
-
-	if err := command.Start(); err != nil {
-		pw.Close()
-		return nil, nil, fmt.Errorf("start tail: %w", err)
-	}
-
-	ch := make(chan string, 128)
-	stop := func() {
-		if command.Process != nil {
-			command.Process.Kill() //nolint:errcheck
-		}
-		pw.Close()
-	}
-
-	go func() {
-		defer close(ch)
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			ch <- scanner.Text()
-		}
-	}()
-
-	return ch, stop, nil
-}

@@ -10,17 +10,12 @@ import (
 // embedded in MONGO_URL / MONGODB_URI). Empty user means an unauthenticated
 // server.
 func DetectMongoCredentials(r Runner, containerID string) (user, password string, err error) {
-	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, containerID)
+	cmd := fmt.Sprintf(`docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' %s`, shellQuote(containerID))
 	out, err := r.RunCommand(cmd)
 	if err != nil {
 		return "", "", fmt.Errorf("docker inspect: %w", err)
 	}
-	out = strings.Map(func(r rune) rune {
-		if r == 0 {
-			return -1
-		}
-		return r
-	}, out)
+	out = stripNUL(out)
 
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
@@ -86,6 +81,6 @@ func MongoEvalCmd(containerID, mongoBin, user, password, dbName, js string) stri
 	}
 	return fmt.Sprintf(
 		`docker exec %s %s%s%s --quiet --eval %s`,
-		containerID, mongoBin, auth, db, shellQuote(js),
+		shellQuote(containerID), mongoBin, auth, db, shellQuote(js),
 	)
 }
