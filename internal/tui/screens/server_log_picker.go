@@ -50,7 +50,7 @@ func NewServerLogPickerScreen(customLogs []string, width, height int) *ServerLog
 		Foreground(styles.ColorAccent).
 		BorderLeftForeground(styles.ColorPrimary)
 
-	l := list.New([]list.Item{}, delegate, width, height-6)
+	l := list.New([]list.Item{}, delegate, width, max(height-6, 1))
 	l.Title = "Server Logs"
 	l.Styles.Title = styles.TitleBar
 	l.SetShowStatusBar(false)

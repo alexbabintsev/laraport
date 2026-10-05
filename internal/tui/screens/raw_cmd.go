@@ -30,14 +30,14 @@ func NewRawCmdScreen(width, height int) *RawCmdScreen {
 	cmd.Placeholder = "e.g.  docker exec app bash"
 	cmd.Focus()
 	cmd.CharLimit = 512
-	cmd.Width = width - 6
+	cmd.Width = max(width-6, 1)
 	cmd.PromptStyle = lipgloss.NewStyle().Foreground(styles.ColorPrimary)
 	cmd.TextStyle = lipgloss.NewStyle().Foreground(styles.ColorText)
 
 	stdin := textinput.New()
 	stdin.Placeholder = "type input and press enter…"
 	stdin.CharLimit = 512
-	stdin.Width = width - 6
+	stdin.Width = max(width-6, 1)
 	stdin.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#F1C40F"))
 	stdin.TextStyle = lipgloss.NewStyle().Foreground(styles.ColorText)
 
@@ -45,7 +45,7 @@ func NewRawCmdScreen(width, height int) *RawCmdScreen {
 	sp.Spinner = spinner.Dot
 	sp.Style = styles.SpinnerStyle
 
-	vp := viewport.New(width-4, height-12)
+	vp := viewport.New(max(width-4, 1), max(height-12, 1))
 	vp.Style = styles.OutputStyle
 
 	return &RawCmdScreen{
@@ -67,7 +67,7 @@ func (s *RawCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.RawCmdStartMsg:
 		if msg.Err != nil {
 			s.lines = append(s.lines, "ERROR: "+msg.Err.Error())
-			s.vp.SetContent(strings.Join(s.lines, "\n"))
+			setViewportContent(&s.vp, strings.Join(s.lines, "\n"))
 			s.running = false
 			return s, nil
 		}
@@ -79,7 +79,7 @@ func (s *RawCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.OutputLineMsg:
 		s.lines = append(s.lines, msg.Line)
-		s.vp.SetContent(strings.Join(s.lines, "\n"))
+		setViewportContent(&s.vp, strings.Join(s.lines, "\n"))
 		s.vp.GotoBottom()
 		return s, nil // App will re-dispatch WaitForLine
 
@@ -109,8 +109,12 @@ func (s *RawCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				line := s.stdinInput.Value()
 				s.stdinInput.SetValue("")
 				if s.inCh != nil {
-					ch := s.inCh
-					go func() { ch <- line }()
+					// Non-blocking: the channel is buffered, and a line typed
+					// after the command has gone is simply dropped.
+					select {
+					case s.inCh <- line:
+					default:
+					}
 				}
 				return s, nil
 			}
@@ -120,7 +124,7 @@ func (s *RawCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return s, nil
 			}
 			s.lines = nil
-			s.vp.SetContent("")
+			setViewportContent(&s.vp, "")
 			cmd := val
 			return s, func() tea.Msg {
 				return msgs.PushRawCmdMsg{Cmd: cmd}
@@ -130,10 +134,12 @@ func (s *RawCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.cmdInput.Width = msg.Width - 6
-		s.stdinInput.Width = msg.Width - 6
-		s.vp.Width = msg.Width - 4
-		s.vp.Height = msg.Height - 12
+		s.cmdInput.Width = max(msg.Width-6, 1)
+		s.stdinInput.Width = max(msg.Width-6, 1)
+		s.vp.Width = max(msg.Width-4, 1)
+		s.vp.Height = max(msg.Height-12, 1)
+		fitViewport(&s.vp)
+		s.vp.SetYOffset(s.vp.YOffset) // keep the offset valid for the new height
 	}
 
 	// Route keyboard input to the active input

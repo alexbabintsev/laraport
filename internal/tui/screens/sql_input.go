@@ -34,7 +34,7 @@ func NewSQLInputScreen(dbName, user, password string, engine docker.DBEngine, hi
 	ti.Placeholder = "SELECT * FROM users LIMIT 10;"
 	ti.Focus()
 	ti.CharLimit = 2048
-	ti.Width = width - 6
+	ti.Width = max(width-6, 1)
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.ColorPrimary)
 	ti.TextStyle = lipgloss.NewStyle().Foreground(styles.ColorText)
 
@@ -150,7 +150,7 @@ func (s *SQLInputScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.input.Width = msg.Width - 6
+		s.input.Width = max(msg.Width-6, 1)
 	}
 
 	var cmd tea.Cmd

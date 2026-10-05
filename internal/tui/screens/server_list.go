@@ -56,7 +56,7 @@ func NewServerListScreen(servers []config.Server, width, height int) *ServerList
 		Foreground(styles.ColorAccent).
 		BorderLeftForeground(styles.ColorPrimary)
 
-	l := list.New(items, delegate, width, height-6)
+	l := list.New(items, delegate, width, max(height-6, 1))
 	l.Title = "Select Server"
 	l.Styles.Title = styles.TitleBar
 	l.SetShowStatusBar(false)
@@ -84,7 +84,7 @@ func (s *ServerListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.list.SetSize(msg.Width, msg.Height-6)
+		s.list.SetSize(msg.Width, max(msg.Height-6, 1))
 	}
 	var cmd tea.Cmd
 	s.list, cmd = s.list.Update(msg)

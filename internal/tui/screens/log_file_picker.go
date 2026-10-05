@@ -61,7 +61,7 @@ func NewLogFilePickerScreen(width, height int) *LogFilePickerScreen {
 		Foreground(styles.ColorAccent).
 		BorderLeftForeground(styles.ColorPrimary)
 
-	l := list.New([]list.Item{}, delegate, width, height-6)
+	l := list.New([]list.Item{}, delegate, width, max(height-6, 1))
 	l.Title = "Select Log File"
 	l.Styles.Title = styles.TitleBar
 	l.SetShowStatusBar(false)

@@ -49,7 +49,7 @@ mv laradok /usr/local/bin/
 
 - Docker installed and accessible on target hosts
 - SSH key-based auth for remote servers (or `ssh-agent`)
-- Go 1.26+ (only for building from source)
+- Go 1.26+ (only for building from source; the module pins the patched `go1.26.6` toolchain, which `go` downloads automatically)
 
 ---
 
@@ -347,6 +347,21 @@ laradok/
 The `Runner` interface (`RunCommand`, `RunOutput`, `StreamCommand`, `InteractiveCommand`, `StartCommand`) is implemented by both `SSHClient` and `LocalClient` on top of one small transport primitive, making all features work identically on local and remote Docker hosts.
 
 Every command that runs inside a container is built by `docker.ExecShCmd` / `ExecStreamScript`: the script is passed to `sh -c` as one single-quoted word, so the host shell never expands anything in it, and every embedded value (paths, DB names) is quoted individually. Streams that can be cancelled run as a background job inside the container that is terminated when laradok closes its stdin, so leaving a screen really stops `tail -f`, a long query or a dump on the server.
+
+---
+
+## Development
+
+```bash
+go build -o laradok .
+go test -race ./...                                  # unit tests (hermetic)
+LARADOK_INTEGRATION=1 go test -race ./internal/docker/  # + real Docker containers
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+```
+
+- **Unit tests** need no Docker or network: the SSH layer is tested against an in-process SSH server (reconnects, dropped connections, host-key checks, complete stdout/stderr), and command builders run against a fake `docker` CLI that executes scripts with the real `sh`.
+- **Integration tests** start throwaway containers (labelled `laradok-test`) for busybox, dash and bash shells, PostgreSQL, MariaDB, Redis and MongoDB, using hostile file names and passwords to verify quoting, cancellation and that secrets never appear in process listings.
+- CI (`.github/workflows/test.yml`) runs gofmt, vet, the race-enabled unit tests on Linux and macOS, the integration tests and `govulncheck`; releases run the tests and `govulncheck` before publishing.
 
 ---
 

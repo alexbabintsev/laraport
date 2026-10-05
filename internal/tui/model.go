@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/alexbabintsev/laradok/internal/config"
 	"github.com/alexbabintsev/laradok/internal/connection"
@@ -580,6 +581,31 @@ func connectServer(s config.Server) (docker.Runner, error) {
 		return connection.ConnectSSH(s.Host, s.Port, s.User, s.Key, s.Passphrase)
 	}
 	return connection.NewLocalClient(), nil
+}
+
+// shutdownTimeout bounds how long Shutdown waits for the active stream.
+const shutdownTimeout = 3 * time.Second
+
+// Shutdown stops the active stream (so nothing keeps running on the server or
+// locally after exit) and closes the connection. Call it after the program
+// has exited.
+func (a *App) Shutdown() {
+	if stop := a.stopStream; stop != nil {
+		a.stopStream = nil
+		done := make(chan struct{})
+		go func() {
+			stop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(shutdownTimeout):
+		}
+	}
+	if a.runner != nil {
+		a.runner.Close() //nolint:errcheck
+		a.runner = nil
+	}
 }
 
 // closeRunner closes the active server connection, if any.

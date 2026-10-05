@@ -51,7 +51,7 @@ func NewContainerEditScreen(containerName string, cc config.ContainerConfig, wid
 		ti.SetValue(val)
 		ti.Placeholder = placeholder
 		ti.CharLimit = 256
-		ti.Width = width - 20
+		ti.Width = max(width-20, 1)
 		ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.ColorPrimary)
 		ti.TextStyle = lipgloss.NewStyle().Foreground(styles.ColorText)
 		return ti
@@ -148,7 +148,7 @@ func (s *ContainerEditScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.height = msg.Height
 		for i := range s.fields {
 			if s.fields[i].kind == fieldText {
-				s.fields[i].input.Width = msg.Width - 20
+				s.fields[i].input.Width = max(msg.Width-20, 1)
 			}
 		}
 	}

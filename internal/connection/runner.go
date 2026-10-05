@@ -158,14 +158,13 @@ func (b base) InteractiveCommand(cmd string) (<-chan string, chan<- string, func
 		stdinW.Close()
 	}()
 
-	// Forward input lines to stdin until stop.
+	// Forward input lines to stdin until stop. Once the command has exited
+	// writes fail; keep draining so senders never block.
 	go func() {
 		for {
 			select {
 			case line := <-inCh:
-				if _, err := io.WriteString(stdinW, line+"\n"); err != nil {
-					return
-				}
+				io.WriteString(stdinW, line+"\n") //nolint:errcheck
 			case <-quit:
 				return
 			}

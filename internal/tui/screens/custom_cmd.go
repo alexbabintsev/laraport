@@ -27,6 +27,7 @@ type AutocompleteScreen struct {
 	input       textinput.Model
 	sp          spinner.Model
 	loading     bool
+	loadErr     string // listing the commands failed; manual input still works
 	allCmds     []docker.ArtisanCommand
 	suggestions []docker.ArtisanCommand
 	selected    int  // index in suggestions; -1 = none
@@ -41,7 +42,7 @@ func newAutocompleteScreen(title, headerLabel, cmdPrefix string, width, height i
 	ti.Placeholder = "type to filter…"
 	ti.Focus()
 	ti.CharLimit = 256
-	ti.Width = width - 20
+	ti.Width = max(width-20, 1)
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.ColorPrimary)
 	ti.TextStyle = lipgloss.NewStyle().Foreground(styles.ColorText)
 
@@ -80,6 +81,13 @@ func NewNpmCmdScreen(width, height int) *AutocompleteScreen {
 	s := newAutocompleteScreen("Npm Commands", "npm run", "npm run", width, height)
 	s.input.Placeholder = "e.g.  build"
 	return s
+}
+
+func (s *AutocompleteScreen) setLoadErr(err error) {
+	s.loadErr = ""
+	if err != nil {
+		s.loadErr = err.Error()
+	}
 }
 
 func (s *AutocompleteScreen) Init() tea.Cmd {
@@ -199,6 +207,7 @@ func (s *AutocompleteScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgs.ArtisanCommandsLoadedMsg:
 		s.loading = false
+		s.setLoadErr(msg.Err)
 		if msg.Err == nil {
 			s.allCmds = msg.Commands
 		}
@@ -207,6 +216,7 @@ func (s *AutocompleteScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.ComposerCommandsLoadedMsg:
 		s.loading = false
+		s.setLoadErr(msg.Err)
 		if msg.Err == nil {
 			s.allCmds = msg.Commands
 			s.cmdPrefix = msg.ComposerBin
@@ -217,6 +227,7 @@ func (s *AutocompleteScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.NpmCommandsLoadedMsg:
 		s.loading = false
+		s.setLoadErr(msg.Err)
 		if msg.Err == nil {
 			s.allCmds = msg.Commands
 		}
@@ -294,7 +305,7 @@ func (s *AutocompleteScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.input.Width = msg.Width - 20
+		s.input.Width = max(msg.Width-20, 1)
 	}
 
 	prev := s.input.Value()
@@ -335,6 +346,9 @@ func (s *AutocompleteScreen) View() string {
 	var listLines []string
 	if s.loading {
 		listLines = append(listLines, "  "+s.sp.View()+" Loading commands...")
+	} else if s.loadErr != "" && len(s.suggestions) == 0 {
+		listLines = append(listLines, styles.ErrorStyle.Padding(0, 2).Width(max(s.width-4, 1)).
+			Render("Could not list commands (you can still type one): "+s.loadErr))
 	} else if len(s.suggestions) == 0 {
 		listLines = append(listLines, lipgloss.NewStyle().
 			Foreground(styles.ColorTextDim).Padding(0, 2).Render("No matches"))

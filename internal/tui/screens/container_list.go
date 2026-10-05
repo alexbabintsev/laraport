@@ -122,7 +122,7 @@ func NewContainerListScreen(server config.Server, runner docker.Runner, width, h
 		Foreground(styles.ColorAccent).
 		BorderLeftForeground(styles.ColorPrimary)
 
-	l := list.New([]list.Item{}, delegate, width, height-6)
+	l := list.New([]list.Item{}, delegate, width, max(height-6, 1))
 	l.Title = fmt.Sprintf("Containers - %s", server.Name)
 	l.Styles.Title = styles.TitleBar
 	l.SetShowStatusBar(false)
@@ -299,7 +299,7 @@ func (s *ContainerListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.list.SetSize(msg.Width, msg.Height-6)
+		s.list.SetSize(msg.Width, max(msg.Height-6, 1))
 
 	case spinner.TickMsg:
 		if s.loading || s.connecting {

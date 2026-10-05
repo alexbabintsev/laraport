@@ -94,8 +94,8 @@ func processCount(t *testing.T, id, needle string) int {
 	return n
 }
 
-// shells are the base images whose /bin/sh differs: busybox ash and dash.
-var shells = []string{"alpine:3.20", "debian:bookworm-slim"}
+// shells are base images whose /bin/sh differs: busybox ash, dash and bash.
+var shells = []string{"alpine:3.20", "debian:bookworm-slim", "fedora:latest"}
 
 func withShells(t *testing.T, f func(t *testing.T, r Runner, id string)) {
 	runShells(t, true, f)

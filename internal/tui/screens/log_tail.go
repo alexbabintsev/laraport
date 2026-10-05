@@ -32,7 +32,7 @@ type LogTailScreen struct {
 }
 
 func NewLogTailScreen(title string, width, height int) *LogTailScreen {
-	vp := viewport.New(width-4, height-4)
+	vp := viewport.New(max(width-4, 1), max(height-4, 1))
 	vp.Style = styles.OutputStyle
 
 	sp := spinner.New()
@@ -53,9 +53,9 @@ func NewLogTailScreen(title string, width, height int) *LogTailScreen {
 func (s *LogTailScreen) setContent() {
 	if s.wrap {
 		// vp.Width is the outer width; OutputStyle has border(2) + padding(2) = 4 chars overhead
-		s.vp.SetContent(wrapLines(s.lines, s.vp.Width-4))
+		setViewportContent(&s.vp, wrapLines(s.lines, max(s.vp.Width-4, 1)))
 	} else {
-		s.vp.SetContent(strings.Join(s.lines, "\n"))
+		setViewportContent(&s.vp, strings.Join(s.lines, "\n"))
 	}
 }
 
@@ -147,8 +147,8 @@ func (s *LogTailScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.vp.Width = msg.Width - 4
-		s.vp.Height = msg.Height - 4
+		s.vp.Width = max(msg.Width-4, 1)
+		s.vp.Height = max(msg.Height-4, 1)
 		s.setContent()
 	}
 

@@ -86,12 +86,14 @@ func HostStreamScript(script string) HostCommand {
 // ends on its own.
 //
 // fd 3 keeps the original stdin for the watcher: POSIX shells otherwise give
-// background jobs /dev/null as stdin.
+// background jobs /dev/null as stdin. wait's stderr is discarded because
+// bash (when it is /bin/sh) prints job-control notices like "[1]+ Done …"
+// there; the job's own stderr is unaffected.
 func stoppable(script string) string {
 	return `set -m 2>/dev/null; exec 3<&0; ` +
 		`( ` + script + "\n" + ` ) </dev/null 3<&- & pid=$!; ` +
 		`{ read _ <&3; kill -TERM -$pid 2>/dev/null || kill -TERM $pid 2>/dev/null; } >/dev/null 2>&1 & ` +
-		`exec 3<&-; wait $pid`
+		`exec 3<&-; wait $pid 2>/dev/null`
 }
 
 // readSecrets returns a script prefix that reads one stdin line per secret and

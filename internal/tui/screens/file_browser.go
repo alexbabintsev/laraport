@@ -119,10 +119,9 @@ func (s *FileBrowserScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		if s.loading {
-			if msg.String() == "ctrl+c" {
-				return s, tea.Quit
-			}
+		// While a listing loads (du over a large tree can be slow) only
+		// navigation away is allowed, so a slow directory never traps the user.
+		if s.loading && msg.String() != "ctrl+c" && msg.String() != "esc" {
 			return s, nil
 		}
 		switch msg.String() {

@@ -7,6 +7,7 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Test suite and CI** — unit tests for every package (in-process SSH server, fake `docker` CLI, TUI orchestration and screens) plus Docker integration tests across busybox/dash/bash shells and PostgreSQL, MariaDB, Redis and MongoDB; GitHub Actions runs them with the race detector on Linux and macOS together with `govulncheck`, and releases are gated on them
 - **Edit container config from the UI** — press `e` on a container in the list to open a form for its display name, root path, favorite and hidden flags
   - Saves back to `config.yaml` (`Config.Save`), creating an exact-name entry that takes precedence over any glob rule
   - The list refreshes immediately; `~` in SSH key paths is preserved on write
@@ -57,6 +58,8 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- Saved `config.yaml` omits empty optional fields; `port` defaults to 22 only for SSH servers
+- Download progress shows bytes below 1 KB instead of "0 KB"
 - Saving the config no longer writes the implicit "Local" server (added when the config defines none) unless it gained container settings; a symlinked `config.yaml` (dotfiles) keeps its link
 - `~user/…` key paths are no longer mangled (only `~` / `~/…` are expanded)
 - Removed the unused `internal/dbg` package
@@ -85,6 +88,13 @@ All notable changes to laradok are documented here.
 - **Download Storage** — new main menu item archives `storage/` inside the container via `tar | gzip | base64 -w 76`, shows directory size before transfer, saves to `~/Downloads/<container>_storage_<timestamp>.tar.gz`; no temporary files created on the server
 
 ### Fixed
+- **Crash on small terminal windows** — the output, log and command screens could compute negative or too-small viewport sizes, and bubbles' viewport then panicked on scroll; sizes are now clamped and the scroll offset is kept in range after content changes
+- **Wrapped lines no longer cut multi-byte characters** — line wrapping (F2) counted bytes, splitting Cyrillic and other UTF-8 text mid-character; it now measures display cells and keeps ANSI colours
+- **File browser: `esc` works while a directory is loading** — a slow listing (`du` over a large tree) no longer traps you on the screen
+- **Exiting the app stops the running stream** and closes the connection, so nothing (e.g. a local `docker exec … tail -f`) is left running after quit
+- Artisan / Composer / npm pickers show why listing the commands failed (e.g. a PHP fatal error) instead of an empty list; manual input still works
+- Typing into a finished Custom Command no longer leaks a goroutine per line
+- Job-control notices (`[1]+ Done …`) from containers whose `/bin/sh` is bash no longer appear in command output
 - **Incomplete / corrupted output from remote servers** (container list missing entries, partial database lists, stray NUL bytes) — the SSH runner wrote stdout and stderr into one unsynchronised `bytes.Buffer` from two goroutines; whenever the remote side printed anything on stderr (shell rc files, CLI warnings) the buffer was corrupted. Output is now collected safely, and parsed commands read stdout only, so stderr noise cannot leak into lists. The retry-on-empty / NUL-stripping workarounds are gone
 - **Dropped SSH connections are re-established** — after a network change, sleep or server restart the next action reconnects transparently instead of failing until the app is restarted. Dead connections are detected via keepalives (every 30 s) and a 10 s limit on opening a session; connecting and the SSH handshake time out after 15 s
 - **UI freeze after leaving running commands** — output streams were started synchronously inside the UI loop and their stop function was discarded, so leaving an artisan/SQL/dump screen early leaked an SSH session slot; after six such exits the whole UI hung. Every stream now starts in the background and is stopped when its screen closes, and waiting for a session slot times out after 30 s
@@ -105,6 +115,7 @@ All notable changes to laradok are documented here.
 - `base64 -w 0` replaced with `base64 -w 76` in storage and pg_dump pipelines — `bufio.Scanner` has a 64 KB token limit and silently dropped single-line base64 output from large archives, causing "no data received" errors
 
 ### Security
+- **Dependencies patched** — `golang.org/x/crypto` v0.49.0 → v0.57.0 (9 advisories reachable through the SSH client) and the toolchain pinned to `go1.26.6` (2 standard-library advisories); `govulncheck` now reports no reachable vulnerabilities and runs in CI and before every release
 - **SSH host keys are verified** against `~/.ssh/known_hosts` with `accept-new` semantics — unknown hosts are recorded on first use, changed keys are rejected. Previously a missing `known_hosts` file silently disabled verification (`InsecureIgnoreHostKey`)
 - **Passwords no longer appear in process listings** — PostgreSQL, MySQL and Redis passwords were passed as `docker exec -e PGPASSWORD=…` / `-a …` arguments, readable by any user on the host via `ps`. They are now written to the command's stdin and exported inside the container only; `mongosh` authenticates from the environment and `mongodump` uses a private `--config` file
 - Downloaded dumps/archives are created with mode `0600`; `config.yaml` (which may hold key passphrases) and the SQL history are written atomically with mode `0600`

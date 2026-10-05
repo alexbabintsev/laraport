@@ -123,7 +123,7 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 		Foreground(styles.ColorAccent).
 		BorderLeftForeground(styles.ColorPrimary)
 
-	l := list.New(items, delegate, width, height-6)
+	l := list.New(items, delegate, width, max(height-6, 1))
 	title := container.Name
 	if ccfg.DisplayName != "" {
 		title = ccfg.DisplayName
@@ -216,7 +216,7 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.width = msg.Width
 		s.height = msg.Height
 		if !s.loading {
-			s.list.SetSize(msg.Width, msg.Height-6)
+			s.list.SetSize(msg.Width, max(msg.Height-6, 1))
 		}
 	}
 

@@ -116,7 +116,7 @@ type ArtisanCommand struct {
 
 // ListArtisanCommands returns all available artisan commands with descriptions.
 func ListArtisanCommands(r Runner, containerID, rootPath string) ([]ArtisanCommand, error) {
-	script := "php " + shellQuote(artisanPath(rootPath)) + " list --raw --no-ansi 2>/dev/null"
+	script := "php " + shellQuote(artisanPath(rootPath)) + " list --raw --no-ansi"
 	out, err := runOutput(r, ExecShCmd(containerID, script))
 	if err != nil {
 		return nil, fmt.Errorf("artisan list: %w", err)
@@ -189,7 +189,7 @@ func ListComposerCommands(r Runner, containerID, rootPath string) ([]ArtisanComm
 	if err != nil {
 		return nil, "", err
 	}
-	script := "cd " + shellQuote(root) + " && " + composerBin + " list --no-ansi 2>/dev/null"
+	script := "cd " + shellQuote(root) + " && " + composerBin + " list --no-ansi"
 	out, err := runOutput(r, ExecShCmd(containerID, script))
 	if err != nil {
 		return nil, composerBin, fmt.Errorf("composer list: %w", err)
@@ -226,7 +226,7 @@ func parseComposerCommands(out string) []ArtisanCommand {
 
 // ListNpmCommands returns available npm scripts from package.json with descriptions.
 func ListNpmCommands(r Runner, containerID, rootPath string) ([]ArtisanCommand, error) {
-	script := "cd " + shellQuote(appRoot(rootPath)) + " && npm run 2>/dev/null"
+	script := "cd " + shellQuote(appRoot(rootPath)) + " && npm run"
 	out, err := runOutput(r, ExecShCmd(containerID, script))
 	if err != nil {
 		return nil, fmt.Errorf("npm run: %w", err)

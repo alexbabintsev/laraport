@@ -2,6 +2,7 @@ package screens
 
 import (
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 
 	"github.com/alexbabintsev/laradok/internal/docker"
@@ -26,44 +27,49 @@ type OutputScreen struct {
 	height       int
 }
 
-// wrapLines wraps each line to maxWidth, splitting on spaces where possible.
+// wrapLines wraps each line to maxWidth terminal cells, breaking at spaces
+// where possible. Widths are measured in display cells (not bytes), so
+// multi-byte text such as Cyrillic is never cut mid-character and wide
+// characters count double; ANSI colour codes are preserved.
 func wrapLines(lines []string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return strings.Join(lines, "\n")
 	}
-	var out []string
-	for _, line := range lines {
-		if len(line) <= maxWidth {
-			out = append(out, line)
-			continue
-		}
-		for len(line) > maxWidth {
-			// Try to break at last space within maxWidth
-			cut := maxWidth
-			if idx := strings.LastIndex(line[:cut], " "); idx > 0 {
-				cut = idx + 1
-			}
-			out = append(out, line[:cut])
-			line = line[cut:]
-		}
-		if len(line) > 0 {
-			out = append(out, line)
-		}
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = ansi.Wrap(line, maxWidth, "")
 	}
 	return strings.Join(out, "\n")
+}
+
+// fitViewport keeps vp at least one line taller (and one column wider) than
+// its style's frame: below that bubbles' viewport computes offsets past the
+// end of the content.
+func fitViewport(vp *viewport.Model) {
+	vp.Height = max(vp.Height, vp.Style.GetVerticalFrameSize()+1)
+	vp.Width = max(vp.Width, vp.Style.GetHorizontalFrameSize()+1)
+}
+
+// setViewportContent sets vp's content and pulls the scroll offset back into
+// range. bubbles' viewport (v1.0.0) panics in ScrollUp when the offset is left
+// past the end of shorter content — e.g. after re-wrapping on a resize.
+func setViewportContent(vp *viewport.Model, content string) {
+	fitViewport(vp)
+	vp.SetContent(content)
+	vp.SetYOffset(vp.YOffset)
 }
 
 func (s *OutputScreen) setContent() {
 	if s.wrap {
 		// vp.Width is the outer width; OutputStyle has border(2) + padding(2) = 4 chars overhead
-		s.vp.SetContent(wrapLines(s.lines, s.vp.Width-4))
+		setViewportContent(&s.vp, wrapLines(s.lines, max(s.vp.Width-4, 1)))
 	} else {
-		s.vp.SetContent(strings.Join(s.lines, "\n"))
+		setViewportContent(&s.vp, strings.Join(s.lines, "\n"))
 	}
 }
 
 func NewOutputScreen(title string, width, height int) *OutputScreen {
-	vp := viewport.New(width-4, height-4)
+	vp := viewport.New(max(width-4, 1), max(height-4, 1))
 	vp.Style = styles.OutputStyle
 
 	sp := spinner.New()
@@ -140,8 +146,8 @@ func (s *OutputScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.vp.Width = msg.Width - 4
-		s.vp.Height = msg.Height - 8
+		s.vp.Width = max(msg.Width-4, 1)
+		s.vp.Height = max(msg.Height-8, 1)
 		s.setContent()
 	}
 

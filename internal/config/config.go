@@ -19,13 +19,13 @@ const (
 
 type Server struct {
 	Name       string            `yaml:"name"`
-	Host       string            `yaml:"host"`
-	Port       int               `yaml:"port"`
-	User       string            `yaml:"user"`
-	Key        string            `yaml:"key"`
-	Passphrase string            `yaml:"passphrase"`
+	Host       string            `yaml:"host,omitempty"`
+	Port       int               `yaml:"port,omitempty"`
+	User       string            `yaml:"user,omitempty"`
+	Key        string            `yaml:"key,omitempty"`
+	Passphrase string            `yaml:"passphrase,omitempty"`
 	Type       ServerType        `yaml:"type"`
-	Containers []ContainerConfig `yaml:"containers"`
+	Containers []ContainerConfig `yaml:"containers,omitempty"`
 
 	// implicit marks the Local server added when the config defines none; it
 	// is not written back by Save unless it gained container settings.
@@ -61,7 +61,7 @@ func (s Server) FindContainerConfig(containerName string) (ContainerConfig, bool
 type Command struct {
 	Label string `yaml:"label"`
 	Cmd   string `yaml:"cmd"`
-	Desc  string `yaml:"desc"`
+	Desc  string `yaml:"desc,omitempty"`
 }
 
 type CommandGroup struct {
@@ -71,18 +71,18 @@ type CommandGroup struct {
 
 // ContainerConfig holds per-container overrides within a server.
 type ContainerConfig struct {
-	Name        string         `yaml:"name"`         // docker container name or ID prefix to match
-	DisplayName string         `yaml:"display_name"` // custom display name
-	Favorite    bool           `yaml:"favorite"`     // show with star, yellow, sorted to top
-	Hidden      bool           `yaml:"hidden"`       // hide from container list
-	RootPath    string         `yaml:"root_path"`    // custom path to app root (default: /var/www/html)
-	CustomLogs  []string       `yaml:"custom_logs"`  // extra log file paths inside the container
-	Commands    []CommandGroup `yaml:"commands"`     // configurable command groups for the Commands screen
+	Name        string         `yaml:"name"`                   // docker container name or ID prefix to match
+	DisplayName string         `yaml:"display_name,omitempty"` // custom display name
+	Favorite    bool           `yaml:"favorite,omitempty"`     // show with star, yellow, sorted to top
+	Hidden      bool           `yaml:"hidden,omitempty"`       // hide from container list
+	RootPath    string         `yaml:"root_path,omitempty"`    // custom path to app root (default: /var/www/html)
+	CustomLogs  []string       `yaml:"custom_logs,omitempty"`  // extra log file paths inside the container
+	Commands    []CommandGroup `yaml:"commands,omitempty"`     // configurable command groups for the Commands screen
 }
 
 type Config struct {
-	Servers  []Server       `yaml:"servers"`
-	Commands []CommandGroup `yaml:"commands"`
+	Servers  []Server       `yaml:"servers,omitempty"`
+	Commands []CommandGroup `yaml:"commands,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
@@ -101,7 +101,7 @@ func Load(path string) (*Config, error) {
 
 	for i := range cfg.Servers {
 		cfg.Servers[i].Key = expandHome(cfg.Servers[i].Key)
-		if cfg.Servers[i].Port == 0 {
+		if cfg.Servers[i].Type == ServerTypeSSH && cfg.Servers[i].Port == 0 {
 			cfg.Servers[i].Port = 22
 		}
 	}
