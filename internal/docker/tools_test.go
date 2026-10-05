@@ -119,32 +119,6 @@ ps) cat`, 1)
 	}
 }
 
-func TestTailLaravelLogFallbackForEmptyFile(t *testing.T) {
-	_, r := fakeDocker(t)
-	root := t.TempDir()
-	logs := filepath.Join(root, "storage", "logs")
-	os.MkdirAll(logs, 0o755)
-	os.WriteFile(filepath.Join(logs, "laravel.log"), nil, 0o644)
-
-	ch, stop, total, top, err := TailLaravelLog(r, "c", root)
-	if err != nil || total != 0 || top != 0 {
-		t.Fatalf("total %d top %d err %v", total, top, err)
-	}
-	defer stop()
-	f, _ := os.OpenFile(filepath.Join(logs, "laravel.log"), os.O_APPEND|os.O_WRONLY, 0)
-	time.Sleep(300 * time.Millisecond)
-	f.WriteString("new entry\n")
-	f.Close()
-	select {
-	case l := <-ch:
-		if l != "new entry" {
-			t.Fatalf("line %q", l)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("appended line not followed")
-	}
-}
-
 func TestStorageSizeFake(t *testing.T) {
 	_, r := fakeDocker(t)
 	root := t.TempDir()

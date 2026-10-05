@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -149,22 +150,110 @@ func TestLoadDirUsesCapturedContainer(t *testing.T) {
 	}
 }
 
-func TestLoadMoreLines(t *testing.T) {
-	app, _ := newTestApp(t)
+func TestLoadMoreLinesByOffset(t *testing.T) {
+	app, r := newTestApp(t)
 	app.Update(msgs.PushLogTailMsg{FilePath: "/l.log"})
 	id := app.sessionID
-	app.logTopLine = 1500
-	_, cmd := app.Update(msgs.LoadMoreLinesMsg{SessionID: id})
-	if app.logTopLine != 500 {
-		t.Fatalf("top line = %d", app.logTopLine)
+	app.Update(msgs.StreamStartedMsg{SessionID: id, Ch: make(chan string), Stop: func() {}, LogPos: &docker.LogPosition{Start: 1 << 20, End: 2 << 20}})
+	if app.logOffset != 1<<20 {
+		t.Fatalf("offset = %d", app.logOffset)
 	}
+	// The fake container returns a chunk "a\nb\nc\n" for any read.
+	r.setOutput(func(cmd, input string) (string, error) { return "partial\nb\nc\n", nil })
+	_, cmd := app.Update(msgs.LoadMoreLinesMsg{SessionID: id})
 	got := collect[msgs.LogChunkLoadedMsg](cmd)
-	if len(got) != 1 || got[0].TopLine != 500 || got[0].SessionID != id {
+	if len(got) != 1 || got[0].SessionID != id || got[0].Start >= 1<<20 || strings.Join(got[0].Lines, ",") != "b,c" {
 		t.Fatalf("got %+v", got)
 	}
-	// Stale session: ignored.
+	r.mu.Lock()
+	last := r.outputs[len(r.outputs)-1]
+	r.mu.Unlock()
+	if !strings.Contains(last, "dd if=") || !strings.Contains(last, "/l.log") {
+		t.Fatalf("read command = %q", last)
+	}
+	app.Update(got[0])
+	if app.logOffset != got[0].Start {
+		t.Fatalf("offset not advanced: %d", app.logOffset)
+	}
+	// A failed load keeps the offset.
+	before := app.logOffset
+	app.Update(msgs.LogChunkLoadedMsg{SessionID: id, Err: errors.New("x")})
+	if app.logOffset != before {
+		t.Fatal("offset moved on error")
+	}
+	// Stale session and docker logs: ignored.
 	if _, cmd := app.Update(msgs.LoadMoreLinesMsg{SessionID: id + 7}); cmd != nil {
 		t.Fatal("stale LoadMoreLines handled")
+	}
+	app.Update(msgs.PushLogTailMsg{LogType: "docker"})
+	if _, cmd := app.Update(msgs.LoadMoreLinesMsg{SessionID: app.sessionID}); cmd != nil {
+		t.Fatal("docker logs have no file to page through")
+	}
+}
+
+func TestBackgroundLineCount(t *testing.T) {
+	app, r := newTestApp(t)
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 60})
+	app.Update(msgs.PushLogFilePickerMsg{})
+	_, cmd := app.Update(msgs.LogFilesLoadedMsg{Files: []docker.LogFileInfo{{Path: "/l/a.log", Lines: -1}, {Path: "/l/b.log", Lines: -1}}})
+	started := collect[msgs.LineCountStartedMsg](cmd)
+	if len(started) != 1 || started[0].Err != nil {
+		t.Fatalf("started = %+v", started)
+	}
+	r.mu.Lock()
+	countCmd := r.streams[len(r.streams)-1]
+	feed := r.lastFeed
+	r.mu.Unlock()
+	if !strings.Contains(countCmd, "wc -l") || !strings.Contains(countCmd, "/l/a.log") {
+		t.Fatalf("count command = %q", countCmd)
+	}
+	_, cmd = app.Update(started[0])
+
+	// Results arrive one by one and update the picker in place.
+	feed <- "noise"
+	feed <- "42|/l/a.log"
+	msg := collect[msgs.LineCountMsg](cmd)
+	if len(msg) != 1 || msg[0].Path != "/l/a.log" || msg[0].Lines != 42 {
+		t.Fatalf("count msg = %+v", msg)
+	}
+	_, cmd = app.Update(msg[0])
+	if !strings.Contains(app.View(), "42 lines") {
+		t.Fatal("picker not updated")
+	}
+
+	// Opening a log from the picker keeps counting (the picker stays below).
+	app.Update(msgs.PushLogTailMsg{FilePath: "/l/a.log"})
+	if s, _, _ := r.counts(); s != 0 {
+		t.Fatal("count stopped when opening a log")
+	}
+	app.Update(msgs.PopMsg{}) // back to the picker
+	close(feed)
+	done := collect[msgs.LineCountDoneMsg](cmd)
+	if len(done) != 1 {
+		t.Fatalf("done = %+v", done)
+	}
+	app.Update(done[0])
+	if !strings.Contains(app.View(), "? lines") {
+		t.Fatal("uncounted file not marked unknown")
+	}
+}
+
+func TestLeavingPickerStopsLineCount(t *testing.T) {
+	app, r := newTestApp(t)
+	app.Update(msgs.PushServerLogPickerMsg{})
+	_, cmd := app.Update(msgs.HostLogsDiscoveredMsg{Logs: []docker.HostLog{{Service: "x", Path: "/var/log/x.log", Lines: -1}}})
+	started := collect[msgs.LineCountStartedMsg](cmd)
+	app.Update(started[0])
+	app.Update(msgs.PopMsg{})
+	eventually(t, "count stop", func() bool { s, _, _ := r.counts(); return s == 1 })
+
+	// A count that finishes starting after the picker closed is stopped too.
+	stopped := make(chan struct{})
+	app.Update(msgs.LineCountStartedMsg{ID: app.countID - 1, Stop: func() { close(stopped) }})
+	<-stopped
+	// Late results for the old count are ignored.
+	if _, cmd := app.Update(msgs.LineCountMsg{ID: app.countID - 1, Path: "/x", Lines: 1}); cmd != nil {
+		t.Fatal("stale count handled")
 	}
 }
 

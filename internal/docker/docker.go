@@ -6,7 +6,6 @@ import (
 	"github.com/alexbabintsev/laradok/internal/connection"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -282,32 +281,29 @@ func ExecCustomCommand(r Runner, containerID, workDir, command string) (<-chan s
 	return Stream(r, ExecStreamScript(containerID, CustomCommandScript(workDir, command)))
 }
 
-// TailLaravelLog streams the Laravel log file from inside the container in real-time.
-func TailLaravelLog(r Runner, containerID, rootPath string) (<-chan string, func(), int, int, error) {
-	return TailLogFile(r, containerID, logsDir(rootPath)+"/laravel.log")
-}
-
 // LogFileInfo holds metadata about a log file inside a container.
 type LogFileInfo struct {
 	Path       string
 	Size       int64
-	Lines      int
+	Lines      int // -1 until counted
 	CreatedAt  time.Time
 	ModifiedAt time.Time
 }
 
-// fileStatsScript prints one "size|mtime|btime|ctime|lines|path" line for
-// every regular file matched by `find <findArgs>`, sorted by path. The path
-// comes last so a '|' inside a file name cannot shift the other fields.
+// fileStatsScript prints one "size|mtime|btime|ctime|path" line for every
+// regular file matched by `find <findArgs>`, sorted by path. Only metadata is
+// read (stat), never file contents, so it is instant even for multi-GB logs;
+// line counts are gathered separately in the background (CountLines). The
+// path comes last so a '|' inside a file name cannot shift the other fields.
 // findArgs must already be shell-quoted where needed.
 func fileStatsScript(findArgs string) string {
 	return `find ` + findArgs + ` 2>/dev/null | sort | while IFS= read -r f; do ` +
-		`s=$(stat -c '%s|%Y|%W|%Z' "$f" 2>/dev/null) || s='0|0|0|0'; ` +
-		`n=$(wc -l < "$f" 2>/dev/null) || n=0; ` +
-		`printf '%s|%s|%s\n' "$s" "$(echo $n)" "$f"; done`
+		`s=$(stat -c '%s|%Y|%W|%Z' "$f" 2>/dev/null) || s="$(wc -c < "$f" 2>/dev/null | tr -d ' ')|0|0|0"; ` +
+		`printf '%s|%s\n' "$s" "$f"; done`
 }
 
-// parseFileStats parses fileStatsScript output.
+// parseFileStats parses fileStatsScript output. Lines is set to -1
+// (not counted yet).
 func parseFileStats(out string) []LogFileInfo {
 	var files []LogFileInfo
 	for _, line := range strings.Split(out, "\n") {
@@ -315,16 +311,15 @@ func parseFileStats(out string) []LogFileInfo {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 6)
-		if len(parts) != 6 || parts[5] == "" {
+		parts := strings.SplitN(line, "|", 5)
+		if len(parts) != 5 || parts[4] == "" {
 			continue
 		}
-		info := LogFileInfo{Path: parts[5]}
-		info.Size, _ = strconv.ParseInt(parts[0], 10, 64)
+		info := LogFileInfo{Path: parts[4], Lines: -1}
+		info.Size, _ = strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
 		mtime, _ := strconv.ParseInt(parts[1], 10, 64)
 		btime, _ := strconv.ParseInt(parts[2], 10, 64)
 		ctime, _ := strconv.ParseInt(parts[3], 10, 64)
-		info.Lines, _ = strconv.Atoi(strings.TrimSpace(parts[4]))
 		info.ModifiedAt = time.Unix(mtime, 0)
 		// Birth time (%W) is 0 or unsupported on many filesystems — fall back to ctime.
 		if btime > 0 {
@@ -338,7 +333,7 @@ func parseFileStats(out string) []LogFileInfo {
 }
 
 // ListLogFiles returns all files in the container's storage/logs directory
-// with their size, timestamps and line counts, gathered in a single round-trip.
+// with their size and timestamps (Lines = -1; see CountLines).
 func ListLogFiles(r Runner, containerID, rootPath string) ([]LogFileInfo, error) {
 	script := fileStatsScript(shellQuote(logsDir(rootPath)) + " -type f")
 	out, err := r.RunOutput(ExecShCmd(containerID, script), "")
@@ -346,110 +341,6 @@ func ListLogFiles(r Runner, containerID, rootPath string) ([]LogFileInfo, error)
 		return nil, fmt.Errorf("list log files: %w", err)
 	}
 	return parseFileStats(out), nil
-}
-
-// LogChunkSize is the number of lines loaded per lazy log chunk.
-const LogChunkSize = 1000
-
-// tailFollow builds the stream command following path inside the container.
-// from is tail's -n argument: "1000" for the last 1000 lines, "+N" to start
-// at line N.
-func tailFollow(containerID, path, from string) HostCommand {
-	return ExecStreamScript(containerID, "tail -n "+from+" -f "+shellQuote(path))
-}
-
-// TailLogFile loads the last LogChunkSize lines of a file as an initial batch,
-// then follows new lines in real-time. Returns the output channel, a stop func,
-// and the total/topLine for positioning.
-func TailLogFile(r Runner, containerID, filePath string) (<-chan string, func(), int, int, error) {
-	// 1. Count total lines
-	total, err := CountFileLines(r, containerID, filePath)
-	if err != nil || total == 0 {
-		// Fallback: plain tail -f with the last chunk as initial output.
-		ch, stop, err := Stream(r, tailFollow(containerID, filePath, strconv.Itoa(LogChunkSize)))
-		if err != nil {
-			return nil, nil, 0, 0, err
-		}
-		return ch, stop, 0, 0, nil
-	}
-
-	// 2. Load the last chunk via the same mechanism as LoadLogChunk
-	topLine := total - LogChunkSize + 1
-	if topLine < 1 {
-		topLine = 1
-	}
-	initialLines, _, err := LoadLogChunk(r, containerID, filePath, topLine)
-	if err != nil {
-		return nil, nil, 0, 0, err
-	}
-
-	// 3. Follow from the line after the counted ones, so lines appended after
-	// the count (while the chunk loaded) are not lost.
-	tailCh, tailStop, err := Stream(r, tailFollow(containerID, filePath, "+"+strconv.Itoa(total+1)))
-	if err != nil {
-		return nil, nil, 0, 0, err
-	}
-
-	// 4. Merge: send initial lines first, then the follow stream. quit unblocks
-	// the merger when the consumer stops reading before the stream ends.
-	ch := make(chan string, 128)
-	quit := make(chan struct{})
-	var once sync.Once
-	stop := func() {
-		once.Do(func() { close(quit) })
-		tailStop()
-	}
-	go func() {
-		defer close(ch)
-		for _, line := range initialLines {
-			select {
-			case ch <- line:
-			case <-quit:
-				return
-			}
-		}
-		for line := range tailCh {
-			select {
-			case ch <- line:
-			case <-quit:
-				return
-			}
-		}
-	}()
-
-	return ch, stop, total, topLine, nil
-}
-
-// CountFileLines returns the total number of lines in a file inside the container.
-func CountFileLines(r Runner, containerID, filePath string) (int, error) {
-	out, err := runOutput(r, ExecShCmd(containerID, "wc -l < "+shellQuote(filePath)))
-	if err != nil {
-		return 0, fmt.Errorf("count lines in %s: %w", filePath, err)
-	}
-	n, convErr := strconv.Atoi(out)
-	if convErr != nil || n <= 0 {
-		return 0, fmt.Errorf("failed to count lines in %s", filePath)
-	}
-	return n, nil
-}
-
-// LoadLogChunk reads lines [fromLine, fromLine+LogChunkSize) from a file inside
-// the container (1-based line numbers). Returns the lines and whether the start
-// of the file has been reached (fromLine <= 1).
-func LoadLogChunk(r Runner, containerID, filePath string, fromLine int) ([]string, bool, error) {
-	if fromLine < 1 {
-		fromLine = 1
-	}
-	script := fmt.Sprintf(`sed -n '%d,%dp' %s`, fromLine, fromLine+LogChunkSize-1, shellQuote(filePath))
-	out, err := r.RunOutput(ExecShCmd(containerID, script), "")
-	if err != nil {
-		return nil, fromLine <= 1, fmt.Errorf("reading %s: %w", filePath, err)
-	}
-	out = strings.TrimSuffix(out, "\n")
-	if out == "" {
-		return nil, fromLine <= 1, fmt.Errorf("no lines loaded from %s", filePath)
-	}
-	return strings.Split(out, "\n"), fromLine <= 1, nil
 }
 
 // TailDockerLogs streams the Docker container logs (stdout/stderr) in real-time.
@@ -462,7 +353,7 @@ type HostLog struct {
 	Service    string
 	Path       string
 	Size       int64
-	Lines      int
+	Lines      int // -1 until counted
 	CreatedAt  time.Time
 	ModifiedAt time.Time
 }

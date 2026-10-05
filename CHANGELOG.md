@@ -58,6 +58,8 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- **Log viewer reads by byte offset** — opening a log reads the last 256 KB with a seek (`dd skip`) and follows from that exact offset (`tail -c +N -f`); scrolling up loads the 256 KB before the earliest loaded byte. Previously opening counted every line (`wc -l`) and each scroll-back chunk was read with `sed -n 'a,bp'`, which scans the file from the start — both grew with the file size. Opening and paging a 1 GB log now takes the same ~0.2 s as a 1 MB one. The status bar shows `position / size  percent` in bytes
+- **Log pickers list instantly** — files are listed from metadata only (size, dates); line counts are computed in the background and filled in as each finishes, and counting stops when you leave the picker
 - Saved `config.yaml` omits empty optional fields; `port` defaults to 22 only for SSH servers
 - Download progress shows bytes below 1 KB instead of "0 KB"
 - Saving the config no longer writes the implicit "Local" server (added when the config defines none) unless it gained container settings; a symlinked `config.yaml` (dotfiles) keeps its link
@@ -88,6 +90,9 @@ All notable changes to laradok are documented here.
 - **Download Storage** — new main menu item archives `storage/` inside the container via `tar | gzip | base64 -w 76`, shows directory size before transfer, saves to `~/Downloads/<container>_storage_<timestamp>.tar.gz`; no temporary files created on the server
 
 ### Fixed
+- A log line still being written when the viewer opened was shown split in two; it now arrives whole
+- Scrolling up in Docker Logs no longer leaves a permanent "loading…" spinner (there is no file to page through)
+- File sizes of 1 GB and more are shown in GB
 - **Crash on small terminal windows** — the output, log and command screens could compute negative or too-small viewport sizes, and bubbles' viewport then panicked on scroll; sizes are now clamped and the scroll offset is kept in range after content changes
 - **Wrapped lines no longer cut multi-byte characters** — line wrapping (F2) counted bytes, splitting Cyrillic and other UTF-8 text mid-character; it now measures display cells and keeps ANSI colours
 - **File browser: `esc` works while a directory is loading** — a slow listing (`du` over a large tree) no longer traps you on the screen

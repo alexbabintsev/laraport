@@ -23,7 +23,14 @@ type fakeRunner struct {
 	outputs  []string // commands passed to RunOutput
 	stops    int
 	closed   int
-	streamCh chan string
+	lastFeed chan string                             // channel of the most recent stream
+	outputFn func(cmd, input string) (string, error) // RunOutput behaviour (nil = "", nil)
+}
+
+func (f *fakeRunner) setOutput(fn func(cmd, input string) (string, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outputFn = fn
 }
 
 func newFakeRunner() *fakeRunner { return &fakeRunner{} }
@@ -34,6 +41,9 @@ func (f *fakeRunner) RunOutput(cmd, input string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.outputs = append(f.outputs, cmd)
+	if f.outputFn != nil {
+		return f.outputFn(cmd, input)
+	}
 	return "", nil
 }
 
@@ -42,14 +52,36 @@ func (f *fakeRunner) StreamCommand(cmd, input string) (<-chan string, func(), er
 	defer f.mu.Unlock()
 	f.streams = append(f.streams, cmd)
 	f.inputs = append(f.inputs, input)
+	// Lines the test sends on lastFeed come out of the stream; stop ends it.
+	feed := make(chan string, 16)
+	f.lastFeed = feed
 	ch := make(chan string)
+	quit := make(chan struct{})
+	go func() {
+		defer close(ch)
+		for {
+			select {
+			case l, ok := <-feed:
+				if !ok {
+					return
+				}
+				select {
+				case ch <- l:
+				case <-quit:
+					return
+				}
+			case <-quit:
+				return
+			}
+		}
+	}()
 	var once sync.Once
 	return ch, func() {
 		once.Do(func() {
 			f.mu.Lock()
 			f.stops++
 			f.mu.Unlock()
-			close(ch)
+			close(quit)
 		})
 	}, nil
 }

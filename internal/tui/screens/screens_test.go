@@ -503,15 +503,139 @@ func TestDBListSelectsDatabase(t *testing.T) {
 	}
 }
 
-func TestLogTailInitAndChunks(t *testing.T) {
+func TestLogTailTracksBytePositions(t *testing.T) {
 	var m tea.Model = NewLogTailScreen("log", w, h)
-	m, _ = m.Update(msgs.LogTailInitMsg{TotalLines: 3000, TopLine: 2001})
-	for i := 0; i < 5; i++ {
-		m, _ = m.Update(msgs.OutputLineMsg{Line: "line"})
+	m, _ = m.Update(msgs.LogTailInitMsg{Pos: docker.LogPosition{Start: 1 << 30, End: 2 << 30, InitialLines: 2}})
+	s := m.(*LogTailScreen)
+	m.Update(msgs.OutputLineMsg{Line: "initial-1", SessionID: 1})
+	m.Update(msgs.OutputLineMsg{Line: "initial-2", SessionID: 1})
+	if s.fileSize != 2<<30 {
+		t.Fatalf("initial lines changed the size: %d", s.fileSize)
 	}
-	m, _ = m.Update(msgs.LogChunkLoadedMsg{Lines: []string{"older"}, TopLine: 1001, TotalLines: 3000})
-	if m.View() == "" {
-		t.Fatal("empty view")
+	m.Update(msgs.OutputLineMsg{Line: "new", SessionID: 1})
+	if s.fileSize != 2<<30+4 {
+		t.Fatalf("followed line not added: %d", s.fileSize)
+	}
+	if v := m.View(); !strings.Contains(v, "2.00 GB") || !strings.Contains(v, "%") {
+		t.Fatalf("status lacks byte position:\n%s", v)
+	}
+	if s.atTop {
+		t.Fatal("at top although the buffer starts at 1 GB")
+	}
+
+	// An earlier chunk is prepended and moves the buffer start back.
+	m.Update(msgs.LogChunkLoadedMsg{Lines: []string{"older-1", "older-2"}, Start: 1<<30 - 100})
+	if s.bufStart != 1<<30-100 || s.lines[0] != "older-1" || len(s.lines) != 5 {
+		t.Fatalf("after chunk: start %d lines %q", s.bufStart, s.lines)
+	}
+	m.Update(msgs.LogChunkLoadedMsg{Lines: []string{"first"}, Start: 0, AtTop: true})
+	if !s.atTop || s.lines[0] != "first" {
+		t.Fatal("beginning of file not recorded")
+	}
+
+	// A failed load is shown and does not change the buffer.
+	m.Update(msgs.LogChunkLoadedMsg{Err: errors.New("dd: permission denied")})
+	if !strings.Contains(m.View(), "permission denied") || len(s.lines) != 6 {
+		t.Fatal("load error not shown / buffer changed")
+	}
+}
+
+func TestLogTailRequestsEarlierChunkWhenScrollingUp(t *testing.T) {
+	var m tea.Model = NewLogTailScreen("log", w, h)
+	m, _ = m.Update(msgs.LogTailInitMsg{Pos: docker.LogPosition{Start: 5000, End: 9000}})
+	for i := 0; i < 200; i++ {
+		m, _ = m.Update(msgs.OutputLineMsg{Line: fmt.Sprintf("line %d", i), SessionID: 3})
+	}
+	var got []msgs.LoadMoreLinesMsg
+	for i := 0; i < 200 && len(got) == 0; i++ {
+		var cmd tea.Cmd
+		m, cmd = m.Update(key("up"))
+		if cmd == nil {
+			continue
+		}
+		for _, msg := range msgsOf(cmd) {
+			if lm, ok := msg.(msgs.LoadMoreLinesMsg); ok {
+				got = append(got, lm)
+			}
+		}
+	}
+	if len(got) != 1 || got[0].SessionID != 3 {
+		t.Fatalf("load requests = %+v", got)
+	}
+	// While loading, no duplicate requests.
+	_, cmd := m.Update(key("up"))
+	for _, msg := range msgsOf(cmd) {
+		if _, ok := msg.(msgs.LoadMoreLinesMsg); ok {
+			t.Fatal("duplicate load request while loading")
+		}
+	}
+}
+
+func TestLogTailDockerLogsWithoutPositions(t *testing.T) {
+	var m tea.Model = NewLogTailScreen("Docker Logs", w, h)
+	for i := 0; i < 200; i++ {
+		m, _ = m.Update(msgs.OutputLineMsg{Line: "x", SessionID: 1})
+	}
+	if !strings.Contains(m.View(), "200 lines") {
+		t.Fatal("line-count status missing for docker logs")
+	}
+	// No file to page through: scrolling up never asks for more or spins.
+	for i := 0; i < 50; i++ {
+		var cmd tea.Cmd
+		m, cmd = m.Update(key("up"))
+		if cmd == nil {
+			continue
+		}
+		for _, msg := range msgsOf(cmd) {
+			if _, ok := msg.(msgs.LoadMoreLinesMsg); ok {
+				t.Fatal("docker logs requested an earlier chunk")
+			}
+		}
+	}
+	if strings.Contains(m.View(), "loading") || strings.Contains(m.View(), "more") {
+		t.Fatal("docker logs show a paging indicator")
+	}
+}
+
+func TestLogPickersLineCounts(t *testing.T) {
+	var lp tea.Model = NewLogFilePickerScreen(w, 60)
+	lp, _ = lp.Update(msgs.LogFilesLoadedMsg{Files: []docker.LogFileInfo{
+		{Path: "/l/a.log", Size: 3 << 30, Lines: -1},
+		{Path: "/l/b.log", Size: 10, Lines: -1},
+	}})
+	if v := lp.View(); !strings.Contains(v, "counting lines…") || !strings.Contains(v, "3.00 GB") {
+		t.Fatalf("pending state:\n%s", v)
+	}
+	lc := lp.(LineCounter)
+	if strings.Join(lc.LogPaths(), ",") != "/l/a.log,/l/b.log" {
+		t.Fatalf("paths %q", lc.LogPaths())
+	}
+	lc.SetLineCount("/l/a.log", 123456)
+	lc.LineCountDone()
+	v := lp.View()
+	if !strings.Contains(v, "123456 lines") || !strings.Contains(v, "? lines") || strings.Contains(v, "counting") {
+		t.Fatalf("after counting:\n%s", v)
+	}
+
+	var sp tea.Model = NewServerLogPickerScreen([]string{"/custom.log"}, w, 60)
+	sp, _ = sp.Update(msgs.HostLogsDiscoveredMsg{Logs: []docker.HostLog{{Service: "nginx", Path: "/var/log/nginx/error.log", Lines: -1}}})
+	slc := sp.(LineCounter)
+	if len(slc.LogPaths()) != 2 {
+		t.Fatalf("paths %q", slc.LogPaths())
+	}
+	slc.SetLineCount("/custom.log", 7)
+	slc.LineCountDone()
+	if v := sp.View(); !strings.Contains(v, "7 lines") || !strings.Contains(v, "? lines") {
+		t.Fatalf("server picker:\n%s", v)
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	cases := map[int64]string{0: "0 B", 1536: "1.5 KB", 5 << 20: "5.0 MB", 3 << 30: "3.00 GB"}
+	for in, want := range cases {
+		if got := formatBytes(in); got != want {
+			t.Errorf("%d → %q, want %q", in, got, want)
+		}
 	}
 }
 

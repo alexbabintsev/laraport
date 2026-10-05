@@ -196,7 +196,7 @@ func TestListLogFilesFakeHostileNames(t *testing.T) {
 	root := t.TempDir()
 	logs := filepath.Join(root, "storage", "logs")
 	os.MkdirAll(logs, 0o755)
-	names := []string{"a.log", "sp ace.log", "q'uote.log", `x$(touch PWNED).log`}
+	names := []string{"a.log", "sp ace.log", "q'uote.log", `x$(touch PWNED).log`, "p|ipe.log"}
 	for i, n := range names {
 		os.WriteFile(filepath.Join(logs, n), []byte(strings.Repeat("line\n", i+1)), 0o644)
 	}
@@ -204,9 +204,29 @@ func TestListLogFilesFakeHostileNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]int{}
+	if len(files) != len(names) {
+		t.Fatalf("files = %+v", files)
+	}
+	var paths []string
 	for _, f := range files {
-		got[filepath.Base(f.Path)] = f.Lines
+		if f.Lines != -1 {
+			t.Errorf("%s: lines %d before counting", f.Path, f.Lines)
+		}
+		paths = append(paths, f.Path)
+	}
+	// Background counting, by path, for the same hostile names.
+	ch, stop, err := CountLines(r, "c", paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	got := map[string]int{}
+	for line := range ch {
+		p, n, ok := ParseLineCount(line)
+		if !ok {
+			t.Fatalf("unparseable %q", line)
+		}
+		got[filepath.Base(p)] = n
 	}
 	for i, n := range names {
 		if got[n] != i+1 {
@@ -216,37 +236,6 @@ func TestListLogFilesFakeHostileNames(t *testing.T) {
 	if _, err := os.Stat("PWNED"); err == nil {
 		os.Remove("PWNED")
 		t.Fatal("file name was executed")
-	}
-}
-
-func TestLoadLogChunkAndCountFake(t *testing.T) {
-	_, r := fakeDocker(t)
-	p := filepath.Join(t.TempDir(), "big log.log")
-	var b strings.Builder
-	for i := 1; i <= 2500; i++ {
-		b.WriteString("l")
-		b.WriteString(strings.Repeat("x", i%3))
-		b.WriteString("\n")
-	}
-	os.WriteFile(p, []byte(b.String()), 0o644)
-
-	n, err := CountFileLines(r, "c", p)
-	if err != nil || n != 2500 {
-		t.Fatalf("count = %d %v", n, err)
-	}
-	lines, atTop, err := LoadLogChunk(r, "c", p, 1501)
-	if err != nil || len(lines) != LogChunkSize || atTop {
-		t.Fatalf("chunk: %d %v %v", len(lines), atTop, err)
-	}
-	lines, atTop, err = LoadLogChunk(r, "c", p, -5)
-	if err != nil || len(lines) != LogChunkSize || !atTop {
-		t.Fatalf("top chunk: %d %v %v", len(lines), atTop, err)
-	}
-	if _, _, err := LoadLogChunk(r, "c", p, 99999); err == nil {
-		t.Fatal("want error past the end")
-	}
-	if _, err := CountFileLines(r, "c", p+".missing"); err == nil {
-		t.Fatal("want error for a missing file")
 	}
 }
 

@@ -16,7 +16,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **npm scripts** — browse and run scripts from `package.json`
 - **Custom commands** — define reusable command groups per container or globally in config
 - **Interactive shell** — run any command with live stdin/stdout streaming
-- **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle
+- **Log viewer** — tail Laravel logs, Docker stdout/stderr, and host service logs (nginx, php-fpm, supervisor, etc.) with lazy chunk loading and line-wrap toggle; opens and scrolls multi-gigabyte logs instantly (see [Log viewer](#log-viewer))
 - **Docker commands** — inspect, restart, stats, top, diff, network info, and more
 - **Global Docker cleanup** — server-level disk usage and prune commands (images, volumes, networks, build cache, system) with a confirmation step for destructive actions
 - **Database management** — connect to any PostgreSQL, MySQL, MariaDB, Percona, or SQLite container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
@@ -197,6 +197,18 @@ After selecting a container, the main menu offers:
 Menu items are detected automatically with a single `docker exec` probe when the container is opened. A spinner is shown during detection.
 
 **Terminal** suspends the TUI and attaches your real terminal to an interactive shell in the container, resuming laradok when you exit the shell (`exit` or `Ctrl+D`). For local servers it runs `docker exec -it`; for SSH servers it shells out to your system `ssh -t` using the server's host/port/key, so the same key/agent that works for `ssh` must be available.
+
+---
+
+## Log viewer
+
+Log files are read by **byte offset**, never by line number, so the cost of opening or scrolling a log does not depend on its size:
+
+- **Opening** reads the file size (`stat`), then the last 256 KB with a block-aligned `dd skip=… count=…` (a seek, not a scan), cut at line boundaries, and follows new lines with `tail -c +<offset> -f` from exactly where that chunk ended — a line still being written arrives whole, nothing is lost or repeated.
+- **Scrolling up** loads the 256 KB before the earliest loaded byte the same way (growing the chunk for lines longer than that, up to 8 MB). Opening a 1 GB log and paging through it takes the same time as for a 1 MB one.
+- The status bar shows the position as `bytes / size  percent` (it grows as new lines arrive). Docker stdout/stderr has no file, so it shows the buffered line count instead.
+
+In the **Laravel Logs** and **Server Logs** pickers the list appears immediately with each file's size and dates (metadata only); line counts are computed in the background (`wc -l`, one file at a time) and filled in as they finish. Counting stops when you leave the picker.
 
 ---
 

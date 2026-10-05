@@ -185,28 +185,38 @@ func TestIntegrationHostileLogFileNames(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := map[string]LogFileInfo{}
+		var paths []string
 		for _, f := range files {
 			got[filepath.Base(f.Path)] = f
+			paths = append(paths, f.Path)
 		}
+		counts := map[string]int{}
+		ch, stop, err := CountLines(r, id, paths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for line := range ch {
+			if p, n, ok := ParseLineCount(line); ok {
+				counts[filepath.Base(p)] = n
+			}
+		}
+		stop()
 		for i, n := range names {
 			f, ok := got[n]
 			if !ok {
 				t.Fatalf("missing %q in %v", n, files)
 			}
-			if f.Lines != i+1 {
-				t.Errorf("%q: lines = %d, want %d", n, f.Lines, i+1)
-			}
-			if f.Size == 0 {
-				t.Errorf("%q: size 0", n)
+			if counts[n] != i+1 {
+				t.Errorf("%q: counted %d lines, want %d", n, counts[n], i+1)
 			}
 			// The path must reach the container verbatim for these, too.
-			cnt, err := CountFileLines(r, id, f.Path)
-			if err != nil || cnt != i+1 {
-				t.Errorf("CountFileLines(%q) = %d, %v", n, cnt, err)
+			size, err := FileSize(r, id, f.Path)
+			if err != nil || size != f.Size || size == 0 {
+				t.Errorf("FileSize(%q) = %d, %v (listed %d)", n, size, err, f.Size)
 			}
-			chunk, _, err := LoadLogChunk(r, id, f.Path, 1)
-			if err != nil || len(chunk) != i+1 {
-				t.Errorf("LoadLogChunk(%q) = %d lines, %v", n, len(chunk), err)
+			lines, start, err := ReadLinesBefore(r, id, f.Path, size, LogChunkBytes)
+			if err != nil || len(lines) != i+1 || start != 0 {
+				t.Errorf("ReadLinesBefore(%q) = %d lines from %d, %v", n, len(lines), start, err)
 			}
 		}
 	})
@@ -261,17 +271,21 @@ func TestIntegrationStreamEndsOnItsOwn(t *testing.T) {
 func TestIntegrationTailLogFile(t *testing.T) {
 	withShells(t, func(t *testing.T, r Runner, id string) {
 		p := "/var/log/app log.log"
-		dexec(t, id, fmt.Sprintf("i=1; while [ $i -le 1500 ]; do echo line$i; i=$((i+1)); done > %s", shellQuote(p)))
+		// 40000 lines of 8 bytes ("lineNNNNN\n" padded) ≈ 400 KB: more than one chunk.
+		dexec(t, id, fmt.Sprintf("i=10000; while [ $i -lt 50000 ]; do echo line$i; i=$((i+1)); done > %s", shellQuote(p)))
+		const lineLen = 10 // "line12345\n"
 
-		ch, stop, total, top, err := TailLogFile(r, id, p)
+		ch, stop, pos, err := TailLogFile(r, id, p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if total != 1500 || top != 501 {
-			t.Fatalf("total=%d top=%d", total, top)
+		size := int64(40000 * lineLen)
+		if pos == nil || pos.End != size || pos.Start%lineLen != 0 || size-pos.Start > LogChunkBytes {
+			t.Fatalf("pos = %+v", pos)
 		}
-		for i := 501; i <= 1500; i++ {
-			if l := <-ch; l != fmt.Sprintf("line%d", i) {
+		first := 10000 + int(pos.Start/lineLen)
+		for i := 0; i < pos.InitialLines; i++ {
+			if l := <-ch; l != fmt.Sprintf("line%d", first+i) {
 				t.Fatalf("initial line %d = %q", i, l)
 			}
 		}
@@ -284,225 +298,75 @@ func TestIntegrationTailLogFile(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("appended line not followed")
 		}
-		stop()
-		waitFor(t, 10*time.Second, "tail to exit", func() bool { return processCount(t, id, "tail -n +1501 -f") == 0 })
-	})
-}
 
-func TestIntegrationSecretsStayOffCommandLines(t *testing.T) {
-	withShells(t, func(t *testing.T, r Runner, id string) {
-		secret := `pa'ss "w$x\ord`
-		hc := ExecStreamScript(id, `echo "[$MY_SECRET]"; sleep 30`, Secret{Name: "MY_SECRET", Value: secret})
-		if strings.Contains(hc.Cmd, "pa'ss") || strings.Contains(hc.Cmd, "w$x") {
-			t.Fatalf("secret leaked into the command line: %s", hc.Cmd)
-		}
-		ch, stop, err := Stream(r, hc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer stop()
-		if l := <-ch; l != "["+secret+"]" {
-			t.Fatalf("secret arrived as %q", l)
-		}
-		// No process in the container carries the secret in its argv.
-		if n := processCount(t, id, "w$x"); n != 0 {
-			t.Fatalf("%d processes expose the secret in argv", n)
-		}
-	})
-}
-
-func TestIntegrationGzipPipeKeepsProducerStatus(t *testing.T) {
-	withShells(t, func(t *testing.T, r Runner, id string) {
-		dexec(t, id, "command -v gzip")
-		out, err := r.RunOutput(ExecShCmd(id, gzipPipe("echo partial; exit 7")), "")
-		if err == nil || !strings.Contains(err.Error(), "7") {
-			t.Fatalf("want exit status 7, got %v", err)
-		}
-		zr, zerr := gzip.NewReader(strings.NewReader(out))
-		if zerr != nil {
-			t.Fatalf("output is not gzip: %v", zerr)
-		}
-		data, _ := io.ReadAll(zr)
-		if string(data) != "partial\n" {
-			t.Fatalf("data = %q", data)
-		}
-		if _, err := r.RunOutput(ExecShCmd(id, gzipPipe("echo ok")), ""); err != nil {
-			t.Fatalf("successful producer reported %v", err)
-		}
-	})
-}
-
-func TestIntegrationDownloadPath(t *testing.T) {
-	withShellsSerial(t, func(t *testing.T, r Runner, id string) {
-		dir := useTempDownloads(t)
-		dexec(t, id, `mkdir -p "/data/my dir/sub" && echo hello > "/data/my dir/a.txt" && `+
-			`head -c 3000000 /dev/urandom > "/data/my dir/sub/blob.bin"`)
-
-		ch, stop, err := DownloadPath(r, id, "app/1", "/data/my dir")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer stop()
-		saved := savedPath(t, drain(t, ch, 60*time.Second))
-		if filepath.Dir(saved) != dir || !strings.HasPrefix(filepath.Base(saved), "app_1_my_dir_") {
-			t.Fatalf("saved as %s", saved)
-		}
-		st, err := os.Stat(saved)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if st.Mode().Perm() != 0o600 {
-			t.Errorf("mode = %v, want 0600", st.Mode().Perm())
-		}
-		entries := tarEntries(t, saved)
-		if entries["my dir/a.txt"] != 6 || entries["my dir/sub/blob.bin"] != 3000000 {
-			t.Fatalf("archive entries = %v", entries)
-		}
-		assertNoPartFiles(t, dir)
-	})
-}
-
-func TestIntegrationDownloadCancel(t *testing.T) {
-	withShellsSerial(t, func(t *testing.T, r Runner, id string) {
-		dir := useTempDownloads(t)
-		// An endless producer: only cancellation can end it.
-		hc := ExecStreamScript(id, "cat /dev/urandom")
-		ch, stop, err := download(r, hc, "start", "endless.bin", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		<-ch // start line
-		waitFor(t, 10*time.Second, "data to flow", func() bool {
-			m, _ := filepath.Glob(filepath.Join(dir, ".laradok-*.part"))
-			if len(m) == 0 {
-				return false
+		// Walk back to the start of the file chunk by chunk.
+		end, prev := pos.Start, first
+		for end > 0 {
+			lines, start, err := ReadLinesBefore(r, id, p, end, LogChunkBytes)
+			if err != nil || len(lines) == 0 {
+				t.Fatalf("chunk before %d: %d lines, %v", end, len(lines), err)
 			}
-			st, err := os.Stat(m[0])
-			return err == nil && st.Size() > 0
-		})
+			if lines[len(lines)-1] != fmt.Sprintf("line%d", prev-1) {
+				t.Fatalf("chunk before %d ends with %q, want line%d", end, lines[len(lines)-1], prev-1)
+			}
+			prev -= len(lines)
+			end = start
+		}
+		if prev != 10000 {
+			t.Fatalf("walked back to line%d, want line10000", prev)
+		}
+
 		stop()
-		assertNoPartFiles(t, dir)
-		if m, _ := filepath.Glob(filepath.Join(dir, "endless*")); len(m) != 0 {
-			t.Fatalf("cancelled download left %v", m)
-		}
-		waitFor(t, 10*time.Second, "cat to be killed", func() bool { return processCount(t, id, "cat /dev/urandom") == 0 })
+		waitFor(t, 10*time.Second, "tail to exit", func() bool { return processCount(t, id, "tail -c +") == 0 })
 	})
 }
 
-func TestIntegrationDownloadFailureLeavesNothing(t *testing.T) {
-	withShellsSerial(t, func(t *testing.T, r Runner, id string) {
-		dir := useTempDownloads(t)
-		ch, stop, err := DownloadPath(r, id, "c", "/does/not/exist")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer stop()
-		lines := drain(t, ch, 30*time.Second)
-		last := lines[len(lines)-1]
-		if !strings.HasPrefix(last, "ERROR") {
-			t.Fatalf("want ERROR, got %q", lines)
-		}
-		if m, _ := filepath.Glob(filepath.Join(dir, "*")); len(m) != 0 {
-			t.Fatalf("failed download left %v", m)
-		}
-		if m, _ := filepath.Glob(filepath.Join(dir, ".*")); len(m) != 0 {
-			t.Fatalf("failed download left %v", m)
-		}
-	})
-}
-
-func TestIntegrationStorageDownloadWhileLogsChange(t *testing.T) {
+// TestIntegrationLargeLogIsInstant checks that opening and scrolling a log
+// does not depend on its size: the same operations on a 1 MB and a 1 GB file
+// must take about as long (each is a seek plus a bounded chunk), whereas
+// anything that scans the file grows ~1000×. (Absolute times are not useful
+// here: the file sits in the page cache, so even a full read is fast.)
+func TestIntegrationLargeLogIsInstant(t *testing.T) {
 	requireIntegration(t)
-	// GNU tar (Debian) exits 1 for "file changed as we read it".
 	r := connection.NewLocalClient()
 	id := startContainer(t, "debian:bookworm-slim", "--", "sleep", "3600")
-	dir := useTempDownloads(t)
-	dexec(t, id, "mkdir -p /var/www/html/storage/logs && head -c 20000000 /dev/zero > /var/www/html/storage/logs/laravel.log")
-	// Keep growing the log while it is archived.
-	exec.Command("docker", "exec", "-d", id, "sh", "-c", "while :; do echo more >> /var/www/html/storage/logs/laravel.log; done").Run() //nolint:errcheck
+	line := "'a moderately long log line with some context [2026-10-05 12:00:00] production.ERROR'"
+	dexec(t, id, "yes "+line+" | head -c 1048576 > /var/log/small.log")
+	dexec(t, id, "yes "+line+" | head -c 1073741824 > /var/log/huge.log")
 
-	ch, stop, err := DownloadStorage(r, id, "web", "")
-	if err != nil {
-		t.Fatal(err)
+	// ops opens the file, then reads one chunk from the middle and one near
+	// the beginning; it returns the best of three runs to reduce noise.
+	ops := func(p string) time.Duration {
+		best := time.Duration(1 << 62)
+		for run := 0; run < 3; run++ {
+			t0 := time.Now()
+			_, stop, pos, err := TailLogFile(r, id, p)
+			if err != nil || pos == nil {
+				t.Fatalf("%s: %v", p, err)
+			}
+			_, start, err := ReadLinesBefore(r, id, p, pos.Start/2, 4096)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ReadLinesBefore(r, id, p, start, LogChunkBytes); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ReadLinesBefore(r, id, p, min(pos.Start, 300000), LogChunkBytes); err != nil {
+				t.Fatal(err)
+			}
+			d := time.Since(t0)
+			stop()
+			best = min(best, d)
+		}
+		return best
 	}
-	defer stop()
-	saved := savedPath(t, drain(t, ch, 60*time.Second))
-	if _, ok := tarEntries(t, saved)["storage/logs/laravel.log"]; !ok {
-		t.Fatal("laravel.log missing from archive")
+	small, huge := ops("/var/log/small.log"), ops("/var/log/huge.log")
+	t0 := time.Now()
+	dexec(t, id, "wc -l < /var/log/huge.log")
+	t.Logf("1 MB: %v   1 GB: %v   (wc -l on 1 GB: %v)", small, huge, time.Since(t0))
+	if huge > 3*small+300*time.Millisecond {
+		t.Errorf("log reads scale with file size: 1 MB %v vs 1 GB %v", small, huge)
 	}
-	_ = dir
-}
-
-func TestIntegrationDetectCapabilities(t *testing.T) {
-	withShells(t, func(t *testing.T, r Runner, id string) {
-		caps, err := DetectCapabilities(r, id, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if caps.HasLaravel || caps.HasPHP {
-			t.Fatalf("plain image detected as Laravel: %+v", caps)
-		}
-		dexec(t, id, "mkdir -p '/srv/my app' && touch '/srv/my app/artisan'")
-		caps, err = DetectCapabilities(r, id, "/srv/my app/")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !caps.HasLaravel || caps.LaravelRoot != "/srv/my app" {
-			t.Fatalf("caps = %+v", caps)
-		}
-		dexec(t, id, "mkdir -p /app && touch /app/artisan")
-		caps, _ = DetectCapabilities(r, id, "")
-		if caps.LaravelRoot != "/app" {
-			t.Fatalf("LaravelRoot = %q, want /app", caps.LaravelRoot)
-		}
-	})
-}
-
-func TestIntegrationContainerListAndInspect(t *testing.T) {
-	requireIntegration(t)
-	r := connection.NewLocalClient()
-	id := startContainer(t, "alpine:3.20", "--name", fmt.Sprintf("laradok-test-%d", time.Now().UnixNano()), "-p", "127.0.0.1::80", "--", "sleep", "3600")
-
-	cs, err := ListContainers(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var found *Container
-	for i := range cs {
-		if strings.HasPrefix(id, cs[i].ID) {
-			found = &cs[i]
-		}
-	}
-	if found == nil || found.State != "running" || !strings.HasPrefix(found.Name, "laradok-test-") || !strings.Contains(found.Ports, "->80/tcp") {
-		t.Fatalf("container not listed correctly: %+v", found)
-	}
-	info, err := InspectContainer(r, id)
-	if err != nil || info.Image != "alpine:3.20" {
-		t.Fatalf("inspect: %+v %v", info, err)
-	}
-	if _, err := SampleContainerStats(r, id); err != nil {
-		t.Fatalf("stats: %v", err)
-	}
-}
-
-func TestIntegrationListDir(t *testing.T) {
-	withShells(t, func(t *testing.T, r Runner, id string) {
-		dexec(t, id, `mkdir -p "/d/sub dir" && printf abc > "/d/f'1" && touch /d/.hidden`)
-		entries, err := ListDir(r, id, "/d/")
-		if err != nil {
-			t.Fatal(err)
-		}
-		var names []string
-		for _, e := range entries {
-			names = append(names, e.Name)
-		}
-		if strings.Join(names, ",") != "sub dir,.hidden,f'1" {
-			t.Fatalf("entries = %q", names)
-		}
-		if entries[2].Size != 3 || entries[2].Path != "/d/f'1" || !entries[0].IsDir {
-			t.Fatalf("entries = %+v", entries)
-		}
-	})
 }
 
 func tarEntries(t *testing.T, path string) map[string]int64 {

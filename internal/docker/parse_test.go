@@ -90,25 +90,46 @@ Scripts available in app@1.0.0 via ` + "`npm run-script`" + `:
 }
 
 func TestParseFileStats(t *testing.T) {
-	out := "1024|1700000000|0|1690000000|42|/var/log/a.log\n" +
-		"10|1700000001|1600000000|1690000000|3|/var/log/pipe|name.log\n" +
+	out := "1024|1700000000|0|1690000000|/var/log/a.log\n" +
+		"10|1700000001|1600000000|1690000000|/var/log/pipe|name.log\n" +
 		"garbage line\n" +
-		"0|0|0|0|0|\n" +
-		"5|x|y|z|  7|/weird\r\n"
+		"0|0|0|0|\n" +
+		" 5|x|y|z|/weird\r\n"
 	got := parseFileStats(out)
 	if len(got) != 3 {
 		t.Fatalf("got %d entries: %+v", len(got), got)
 	}
 	a := got[0]
-	if a.Path != "/var/log/a.log" || a.Size != 1024 || a.Lines != 42 ||
+	if a.Path != "/var/log/a.log" || a.Size != 1024 || a.Lines != -1 ||
 		!a.ModifiedAt.Equal(time.Unix(1700000000, 0)) || !a.CreatedAt.Equal(time.Unix(1690000000, 0)) {
 		t.Fatalf("a = %+v", a)
 	}
 	if got[1].Path != "/var/log/pipe|name.log" || !got[1].CreatedAt.Equal(time.Unix(1600000000, 0)) {
 		t.Fatalf("pipe entry = %+v", got[1])
 	}
-	if got[2].Path != "/weird" || got[2].Lines != 7 || got[2].Size != 5 {
+	if got[2].Path != "/weird" || got[2].Size != 5 {
 		t.Fatalf("weird entry = %+v", got[2])
+	}
+}
+
+func TestParseLineCount(t *testing.T) {
+	cases := []struct {
+		in   string
+		path string
+		n    int
+		ok   bool
+	}{
+		{"42|/var/log/a.log", "/var/log/a.log", 42, true},
+		{" 7|/p|ipe", "/p|ipe", 7, true},
+		{"x|/a", "", 0, false},
+		{"5|", "", 0, false},
+		{"noise", "", 0, false},
+	}
+	for _, c := range cases {
+		p, n, ok := ParseLineCount(c.in)
+		if p != c.path || n != c.n || ok != c.ok {
+			t.Errorf("%q → %q %d %v", c.in, p, n, ok)
+		}
 	}
 }
 

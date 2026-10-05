@@ -186,21 +186,41 @@ type LoadMoreLinesMsg struct {
 	SessionID uint64
 }
 
-// LogTailInitMsg carries the total line count of the file after the tail starts.
+// LogTailInitMsg tells the log tail screen where in the file its initial
+// lines come from (byte offsets).
 type LogTailInitMsg struct {
-	TotalLines int
-	TopLine    int // 1-based line number of the first line currently shown
-	SessionID  uint64
+	Pos       docker.LogPosition
+	SessionID uint64
 }
 
 // LogChunkLoadedMsg carries a batch of earlier lines loaded on demand.
 type LogChunkLoadedMsg struct {
-	Lines      []string
-	AtTop      bool // true when we've reached the beginning of the file
-	TotalLines int  // total lines in the file at time of load
-	TopLine    int  // 1-based line number of the first line in Lines
-	SessionID  uint64
-	Err        error
+	Lines     []string
+	Start     int64 // byte offset where Lines[0] starts
+	AtTop     bool  // true when the beginning of the file has been reached
+	SessionID uint64
+	Err       error
+}
+
+// LineCountStartedMsg reports that background line counting for a log
+// picker started (or failed to).
+type LineCountStartedMsg struct {
+	ID   uint64
+	Ch   <-chan string
+	Stop func()
+	Err  error
+}
+
+// LineCountMsg carries the line count of one file.
+type LineCountMsg struct {
+	ID    uint64
+	Path  string
+	Lines int
+}
+
+// LineCountDoneMsg signals that background line counting finished.
+type LineCountDoneMsg struct {
+	ID uint64
 }
 
 // --- Streaming messages ---
@@ -223,9 +243,9 @@ type StreamStartedMsg struct {
 	Ch        <-chan string
 	Stop      func()
 	Err       error
-	// Log tails of a file: position info for lazy loading of earlier lines.
-	TotalLines int
-	TopLine    int
+	// Log tails of a file: byte position info for lazy loading of earlier
+	// lines (nil for streams without a file position).
+	LogPos *docker.LogPosition
 }
 
 // RawCmdStartMsg signals that an interactive command has started.

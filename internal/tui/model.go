@@ -28,8 +28,11 @@ type App struct {
 	outputCh       <-chan string          // active streaming channel
 	sessionID      uint64                 // incremented whenever a stream starts or its screen closes
 	connectAttempt uint64                 // incremented on every server connect attempt
+	countID        uint64                 // identifies the current background line count
+	countCh        <-chan string          // background line count results
+	stopCount      func()                 // stops the background line count (nil = none)
 	logFilePath    string                 // file path for lazy log chunk loading (empty for docker logs)
-	logTopLine     int                    // 1-based line number of earliest loaded line (0 = unknown/docker)
+	logOffset      int64                  // byte offset of the earliest loaded log line (-1 = unknown/docker)
 	dbEngine       docker.DBEngine        // active database engine for the current DB session
 }
 
@@ -82,6 +85,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 
 	case msgs.PopMsg:
+		// Leaving a log picker stops its background line count.
+		if _, ok := a.top().(screens.LineCounter); ok {
+			a.endLineCount()
+		}
 		// Leaving a screen ends any stream it owned; bumping the session also
 		// discards a stream that is still starting.
 		a.endStream()
@@ -323,7 +330,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.LogFilesLoadedMsg:
 		updated, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = updated
-		return a, cmd
+		return a, tea.Batch(cmd, a.startLineCount())
 
 	case msgs.PushDBScreenMsg:
 		prefix := a.activeServer.Name + "/" + a.container.Name
@@ -436,7 +443,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.HostLogsDiscoveredMsg:
 		updated, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = updated
-		return a, cmd
+		return a, tea.Batch(cmd, a.startLineCount())
+
+	case msgs.LineCountStartedMsg:
+		if msg.ID != a.countID {
+			if msg.Stop != nil {
+				go msg.Stop()
+			}
+			return a, nil
+		}
+		if msg.Err != nil {
+			a.forLineCounter(func(lc screens.LineCounter) { lc.LineCountDone() })
+			return a, nil
+		}
+		a.stopCount, a.countCh = msg.Stop, msg.Ch
+		return a, waitLineCount(msg.Ch, msg.ID)
+
+	case msgs.LineCountMsg:
+		if msg.ID != a.countID {
+			return a, nil
+		}
+		a.forLineCounter(func(lc screens.LineCounter) { lc.SetLineCount(msg.Path, msg.Lines) })
+		return a, waitLineCount(a.countCh, msg.ID)
+
+	case msgs.LineCountDoneMsg:
+		if msg.ID != a.countID {
+			return a, nil
+		}
+		a.forLineCounter(func(lc screens.LineCounter) { lc.LineCountDone() })
+		a.endLineCount()
+		return a, nil
 
 	case msgs.PushLogTailMsg:
 		title := msg.Title
@@ -445,7 +481,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		screen := screens.NewLogTailScreen(title, a.width, a.height)
 		// Track file path for lazy chunk loading; docker logs have no path.
-		a.logFilePath, a.logTopLine = "", 0
+		a.logFilePath, a.logOffset = "", -1
 		if msg.LogType != "docker" && msg.FilePath != "" {
 			a.logFilePath = msg.FilePath
 		}
@@ -458,8 +494,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				ch, stop, err := docker.TailDockerLogs(runner, containerID)
 				return msgs.StreamStartedMsg{SessionID: id, Ch: ch, Stop: stop, Err: err}
 			}
-			ch, stop, total, topLine, err := docker.TailLogFile(runner, containerID, msg.FilePath)
-			return msgs.StreamStartedMsg{SessionID: id, Ch: ch, Stop: stop, Err: err, TotalLines: total, TopLine: topLine}
+			ch, stop, pos, err := docker.TailLogFile(runner, containerID, msg.FilePath)
+			return msgs.StreamStartedMsg{SessionID: id, Ch: ch, Stop: stop, Err: err, LogPos: pos}
 		})
 
 	case msgs.StreamStartedMsg:
@@ -481,49 +517,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.outputCh = ch
 		cmds := []tea.Cmd{screens.WaitForLine(ch, a.sessionID)}
-		if msg.TotalLines > 0 && msg.TopLine > 0 {
-			a.logTopLine = msg.TopLine
-			updated, cmd := a.top().Update(msgs.LogTailInitMsg{TotalLines: msg.TotalLines, TopLine: msg.TopLine, SessionID: msg.SessionID})
+		if msg.Err == nil && msg.LogPos != nil {
+			a.logOffset = msg.LogPos.Start
+			updated, cmd := a.top().Update(msgs.LogTailInitMsg{Pos: *msg.LogPos, SessionID: msg.SessionID})
 			a.stack[len(a.stack)-1] = updated
 			cmds = append(cmds, cmd)
 		}
 		return a, tea.Batch(cmds...)
 
-	case msgs.LogTailInitMsg:
-		if msg.SessionID != a.sessionID {
-			return a, nil
-		}
-		a.logTopLine = msg.TopLine
-		updated, cmd := a.top().Update(msg)
-		a.stack[len(a.stack)-1] = updated
-		return a, cmd
-
 	case msgs.LoadMoreLinesMsg:
-		if msg.SessionID != a.sessionID || a.logFilePath == "" || a.logTopLine == 0 {
+		if msg.SessionID != a.sessionID || a.logFilePath == "" || a.logOffset <= 0 {
 			return a, nil
 		}
-		filePath := a.logFilePath
-		sessionID := a.sessionID
-		runner := a.runner
-		containerID := a.container.ID
-		fromLine := a.logTopLine - docker.LogChunkSize
-		if fromLine < 1 {
-			fromLine = 1
-		}
-		a.logTopLine = fromLine
+		runner, containerID, filePath, end, sessionID := a.runner, a.container.ID, a.logFilePath, a.logOffset, a.sessionID
 		return a, func() tea.Msg {
-			total, _ := docker.CountFileLines(runner, containerID, filePath)
-			lines, atTop, err := docker.LoadLogChunk(runner, containerID, filePath, fromLine)
-			return msgs.LogChunkLoadedMsg{
-				Lines: lines, AtTop: atTop,
-				TotalLines: total, TopLine: fromLine,
-				SessionID: sessionID, Err: err,
-			}
+			lines, start, err := docker.ReadLinesBefore(runner, containerID, filePath, end, docker.LogChunkBytes)
+			return msgs.LogChunkLoadedMsg{Lines: lines, Start: start, AtTop: err == nil && start == 0, SessionID: sessionID, Err: err}
 		}
 
 	case msgs.LogChunkLoadedMsg:
 		if msg.SessionID != a.sessionID {
 			return a, nil
+		}
+		if msg.Err == nil {
+			a.logOffset = msg.Start
 		}
 		updated, cmd := a.top().Update(msg)
 		a.stack[len(a.stack)-1] = updated
@@ -583,6 +600,61 @@ func connectServer(s config.Server) (docker.Runner, error) {
 	return connection.NewLocalClient(), nil
 }
 
+// startLineCount counts the lines of the logs listed by the top screen in the
+// background; results arrive as LineCountMsg.
+func (a *App) startLineCount() tea.Cmd {
+	lc, ok := a.top().(screens.LineCounter)
+	if !ok {
+		return nil
+	}
+	paths := lc.LogPaths()
+	a.endLineCount()
+	if len(paths) == 0 {
+		return nil
+	}
+	id := a.countID
+	runner, containerID := a.runner, a.container.ID
+	return func() tea.Msg {
+		ch, stop, err := docker.CountLines(runner, containerID, paths)
+		return msgs.LineCountStartedMsg{ID: id, Ch: ch, Stop: stop, Err: err}
+	}
+}
+
+// waitLineCount reads the next parseable count from ch.
+func waitLineCount(ch <-chan string, id uint64) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		for line := range ch {
+			if path, n, ok := docker.ParseLineCount(line); ok {
+				return msgs.LineCountMsg{ID: id, Path: path, Lines: n}
+			}
+		}
+		return msgs.LineCountDoneMsg{ID: id}
+	}
+}
+
+// endLineCount stops the background line count and invalidates its messages.
+func (a *App) endLineCount() {
+	a.countID++
+	if a.stopCount != nil {
+		go a.stopCount()
+		a.stopCount = nil
+	}
+	a.countCh = nil
+}
+
+// forLineCounter applies f to every log picker in the stack (one may sit
+// below a log viewer opened from it).
+func (a *App) forLineCounter(f func(screens.LineCounter)) {
+	for _, m := range a.stack {
+		if lc, ok := m.(screens.LineCounter); ok {
+			f(lc)
+		}
+	}
+}
+
 // shutdownTimeout bounds how long Shutdown waits for the active stream.
 const shutdownTimeout = 3 * time.Second
 
@@ -590,6 +662,10 @@ const shutdownTimeout = 3 * time.Second
 // locally after exit) and closes the connection. Call it after the program
 // has exited.
 func (a *App) Shutdown() {
+	if a.stopCount != nil {
+		a.stopCount()
+		a.stopCount = nil
+	}
 	if stop := a.stopStream; stop != nil {
 		a.stopStream = nil
 		done := make(chan struct{})

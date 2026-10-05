@@ -14,21 +14,43 @@ import (
 )
 
 type logFileItem struct {
-	info docker.LogFileInfo
+	info     docker.LogFileInfo
+	counting bool // line count still being computed in the background
 }
 
 func (i logFileItem) Title() string { return filepath.Base(i.info.Path) }
 func (i logFileItem) Description() string {
 	size := formatBytes(i.info.Size)
-	lines := fmt.Sprintf("%d lines", i.info.Lines)
+	lines := lineCountLabel(i.info.Lines, i.counting)
 	created := i.info.CreatedAt.Format("2006-01-02 15:04")
 	modified := i.info.ModifiedAt.Format("2006-01-02 15:04")
 	return fmt.Sprintf("%s  •  %s  •  %s  •  created %s  •  modified %s", i.info.Path, size, lines, created, modified)
 }
 func (i logFileItem) FilterValue() string { return i.info.Path }
 
+// lineCountLabel renders a line count that may still be pending (n < 0).
+func lineCountLabel(n int, counting bool) string {
+	switch {
+	case n >= 0:
+		return fmt.Sprintf("%d lines", n)
+	case counting:
+		return "counting lines…"
+	default:
+		return "? lines"
+	}
+}
+
+// LineCounter is implemented by screens that show background line counts.
+type LineCounter interface {
+	LogPaths() []string
+	SetLineCount(path string, lines int)
+	LineCountDone()
+}
+
 func formatBytes(b int64) string {
 	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.2f GB", float64(b)/float64(1<<30))
 	case b >= 1<<20:
 		return fmt.Sprintf("%.1f MB", float64(b)/float64(1<<20))
 	case b >= 1<<10:
@@ -91,7 +113,7 @@ func (s *LogFilePickerScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		items := make([]list.Item, len(msg.Files))
 		for i, f := range msg.Files {
-			items[i] = logFileItem{info: f}
+			items[i] = logFileItem{info: f, counting: f.Lines < 0}
 		}
 		cmd := s.list.SetItems(items)
 		return s, cmd
@@ -149,4 +171,33 @@ func (s *LogFilePickerScreen) View() string {
 		return header + "\n\n  " + lipgloss.NewStyle().Foreground(styles.ColorDanger).Render("Error: "+s.errMsg)
 	}
 	return s.list.View()
+}
+
+// LogPaths returns the paths of the listed files.
+func (s *LogFilePickerScreen) LogPaths() []string {
+	var paths []string
+	for _, it := range s.list.Items() {
+		paths = append(paths, it.(logFileItem).info.Path)
+	}
+	return paths
+}
+
+// SetLineCount records a background line count for path.
+func (s *LogFilePickerScreen) SetLineCount(path string, lines int) {
+	for i, it := range s.list.Items() {
+		if item := it.(logFileItem); item.info.Path == path {
+			item.info.Lines, item.counting = lines, false
+			s.list.SetItem(i, item)
+		}
+	}
+}
+
+// LineCountDone marks every still-uncounted file as unknown.
+func (s *LogFilePickerScreen) LineCountDone() {
+	for i, it := range s.list.Items() {
+		if item := it.(logFileItem); item.counting {
+			item.counting = false
+			s.list.SetItem(i, item)
+		}
+	}
 }
