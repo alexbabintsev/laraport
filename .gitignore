@@ -1,6 +1,6 @@
 # Binary
-laradok
-/laradok
+laraport
+/laraport
 
 # Real config with server hosts/keys - use config.example.yaml as the template
 config.yaml

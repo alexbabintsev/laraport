@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -165,12 +166,12 @@ func (s *DockerCmdScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if s.selected >= 0 && s.selected < len(s.cmds) {
 				dc := s.cmds[s.selected]
-				hostCmd := fmt.Sprintf(dc.cmd, s.containerName)
+				hostCmd := fmt.Sprintf(dc.cmd, docker.ShellQuote(s.containerName))
 				title := dc.label
 				return s, func() tea.Msg {
 					return msgs.PushOutputMsg{
-						Title:   title,
-						HostCmd: hostCmd,
+						Title: title,
+						Host:  docker.HostCommand{Cmd: hostCmd},
 					}
 				}
 			}
@@ -186,9 +187,9 @@ func (s *DockerCmdScreen) View() string {
 	title := styles.TitleBar.Render("Docker Commands — " + s.containerName)
 
 	groupStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F1C40F")).Bold(true)
-	cmdStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
-	descStyle  := lipgloss.NewStyle().Foreground(styles.ColorText)
-	selStyle   := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
+	cmdStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
+	descStyle := lipgloss.NewStyle().Foreground(styles.ColorText)
+	selStyle := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
 
 	labelWidth := 0
 	for _, c := range s.cmds {
@@ -240,9 +241,9 @@ func (s *DockerCmdScreen) View() string {
 
 	body := strings.Join(lines, "\n")
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

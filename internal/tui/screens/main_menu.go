@@ -3,10 +3,10 @@ package screens
 import (
 	"fmt"
 
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/docker"
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,6 +30,9 @@ type MainMenuScreen struct {
 	list            list.Model
 	sp              spinner.Model
 	loading         bool
+	dbEngine        docker.DBEngine
+	mongoBin        string
+	probeErr        string // capability probe failure (e.g. container not running)
 	width           int
 	height          int
 }
@@ -54,6 +57,9 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 	var items []list.Item
 
 	// Always shown
+	items = append(items, menuItem{"Info", "Image, status, network, mounts, and labels"})
+	items = append(items, menuItem{"Stats", "Live CPU, memory, network, disk graphs and top processes"})
+	items = append(items, menuItem{"Terminal", "Open an interactive shell inside the container"})
 	if len(ccfg.Commands) > 0 {
 		items = append(items, menuItem{"Commands", "Browse command groups from config"})
 	}
@@ -86,9 +92,19 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 		menuItem{"Server Logs", "Tail nginx, php, supervisor and other service logs"},
 	)
 
-	// PostgreSQL
-	if caps.HasPostgres {
+	// Database (PostgreSQL, MySQL family, or SQLite)
+	if caps.HasDatabase() {
 		items = append(items, menuItem{"Database", "Browse databases, run SQL queries, download dumps"})
+	}
+
+	// Redis
+	if caps.HasRedis {
+		items = append(items, menuItem{"Redis", "Inspect Redis: INFO, keys, config, slowlog"})
+	}
+
+	// MongoDB
+	if caps.HasMongo() {
+		items = append(items, menuItem{"MongoDB", "Inspect MongoDB: stats, collections, indexes"})
 	}
 
 	// Laravel storage download
@@ -107,7 +123,7 @@ func buildMenuList(container docker.Container, ccfg config.ContainerConfig, caps
 		Foreground(styles.ColorAccent).
 		BorderLeftForeground(styles.ColorPrimary)
 
-	l := list.New(items, delegate, width, height-6)
+	l := list.New(items, delegate, width, max(height-6, 1))
 	title := container.Name
 	if ccfg.DisplayName != "" {
 		title = ccfg.DisplayName
@@ -128,6 +144,12 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgs.ContainerCapsLoadedMsg:
 		s.loading = false
+		s.dbEngine = msg.Caps.DBEngine()
+		s.mongoBin = msg.Caps.MongoBin
+		s.probeErr = ""
+		if msg.Err != nil {
+			s.probeErr = msg.Err.Error()
+		}
 		s.list = buildMenuList(s.container, s.containerCfg, msg.Caps, s.width, s.height)
 		return s, nil
 
@@ -150,6 +172,12 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if item, ok := s.list.SelectedItem().(menuItem); ok {
 				switch item.title {
+				case "Info":
+					return s, func() tea.Msg { return msgs.PushInfoMsg{} }
+				case "Stats":
+					return s, func() tea.Msg { return msgs.PushStatsMsg{} }
+				case "Terminal":
+					return s, func() tea.Msg { return msgs.OpenTerminalMsg{} }
 				case "Commands":
 					groups := s.containerGroups
 					return s, func() tea.Msg { return msgs.PushCommandsMsg{ContainerGroups: groups} }
@@ -170,7 +198,13 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "Server Logs":
 					return s, func() tea.Msg { return msgs.PushServerLogPickerMsg{} }
 				case "Database":
-					return s, func() tea.Msg { return msgs.PushDBScreenMsg{} }
+					engine := s.dbEngine
+					return s, func() tea.Msg { return msgs.PushDBScreenMsg{Engine: engine} }
+				case "Redis":
+					return s, func() tea.Msg { return msgs.PushRedisCmdMsg{} }
+				case "MongoDB":
+					mongoBin := s.mongoBin
+					return s, func() tea.Msg { return msgs.PushMongoCmdMsg{MongoBin: mongoBin} }
 				case "Download Storage":
 					return s, func() tea.Msg { return msgs.PushStorageDownloadMsg{} }
 				case "File Browser":
@@ -182,7 +216,7 @@ func (s *MainMenuScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.width = msg.Width
 		s.height = msg.Height
 		if !s.loading {
-			s.list.SetSize(msg.Width, msg.Height-6)
+			s.list.SetSize(msg.Width, max(msg.Height-6, 1))
 		}
 	}
 
@@ -206,10 +240,10 @@ func (s *MainMenuScreen) View() string {
 		fmt.Sprintf("%s %s  ",
 			styles.DimStyle.Render("container:"),
 			styles.BreadcrumbActive.Render(s.container.Name),
-		)+
-			styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" select  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		) +
+			styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " select  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	if s.loading {
@@ -220,5 +254,9 @@ func (s *MainMenuScreen) View() string {
 		return styles.PinToBottom(s.height, content, help)
 	}
 
+	if s.probeErr != "" {
+		errLine := styles.ErrorStyle.Width(s.width - 4).Render("Could not inspect the container: " + s.probeErr)
+		return styles.PinToBottom(s.height, lipgloss.JoinVertical(lipgloss.Left, s.list.View(), errLine), help)
+	}
 	return styles.PinToBottom(s.height, s.list.View(), help)
 }

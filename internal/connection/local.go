@@ -1,166 +1,82 @@
 package connection
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
 	"io"
 	"os/exec"
 	"sync"
+	"syscall"
+	"time"
 )
 
-// LocalClient runs Docker commands via the local Docker socket.
-type LocalClient struct{}
+// LocalClient runs commands on this machine with `sh -c` (for the local
+// Docker socket).
+type LocalClient struct {
+	base
+}
 
 // NewLocalClient creates a LocalClient.
 func NewLocalClient() *LocalClient {
-	return &LocalClient{}
+	return &LocalClient{base{localTransport{}}}
 }
 
-// RunCommand runs a shell command locally and returns combined output.
-func (c *LocalClient) RunCommand(cmd string) (string, error) {
-	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
-	return string(out), err
-}
+// Close is a no-op; it exists so LocalClient and SSHClient share a lifecycle.
+func (c *LocalClient) Close() error { return nil }
 
-// StreamCommand runs a command locally and streams output line-by-line.
-func (c *LocalClient) StreamCommand(cmd string) (<-chan string, func(), error) {
-	command := exec.Command("sh", "-c", cmd)
+type localTransport struct{}
 
-	pr, pw := io.Pipe()
-	command.Stdout = pw
-	command.Stderr = pw
+// localWaitDelay bounds how long Wait keeps copying output after the shell has
+// exited, in case a stray background process still holds stdout open.
+const localWaitDelay = 2 * time.Second
 
-	if err := command.Start(); err != nil {
-		pw.Close()
-		pr.Close()
-		return nil, nil, fmt.Errorf("start command: %w", err)
-	}
+func (localTransport) start(cmd string, stdin io.Reader, stdout, stderr io.Writer) (*handle, error) {
+	c := exec.Command("sh", "-c", cmd)
+	c.Stdout = stdout
+	c.Stderr = stderr
+	c.WaitDelay = localWaitDelay
+	// Own process group, so kill reaches the whole pipeline (docker CLI etc.),
+	// not just the outer sh.
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	ch := make(chan string, 64)
-	quit := make(chan struct{})
-	done := make(chan struct{})
-
-	var quitOnce sync.Once
-
-	stop := func() {
-		quitOnce.Do(func() { close(quit) })
-		if command.Process != nil {
-			command.Process.Kill() //nolint:errcheck
+	// Feed stdin through an explicit pipe pumped by our own goroutine: exec's
+	// built-in copier would make Wait block until our reader hits EOF.
+	var stdinPipe io.WriteCloser
+	if stdin != nil {
+		p, err := c.StdinPipe()
+		if err != nil {
+			return nil, err
 		}
-		pw.Close()
-		<-done
+		stdinPipe = p
 	}
 
-	go func() {
-		defer close(done)
-		defer close(ch)
-
+	if err := c.Start(); err != nil {
+		return nil, err
+	}
+	if stdinPipe != nil {
 		go func() {
-			command.Wait() //nolint:errcheck
-			pw.Close()
+			io.Copy(stdinPipe, stdin) //nolint:errcheck // EPIPE once the process exits is expected
+			stdinPipe.Close()
 		}()
+	}
 
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			select {
-			case ch <- scanner.Text():
-			case <-quit:
-				return
+	// exited guards against signalling a process group whose leader has been
+	// reaped (its pid could be reused).
+	var mu sync.Mutex
+	exited := false
+	return &handle{
+		wait: func() error {
+			err := c.Wait()
+			mu.Lock()
+			exited = true
+			mu.Unlock()
+			return err
+		},
+		kill: func() {
+			mu.Lock()
+			defer mu.Unlock()
+			if !exited {
+				// Negative pid targets the whole process group.
+				syscall.Kill(-c.Process.Pid, syscall.SIGKILL) //nolint:errcheck
 			}
-		}
-	}()
-
-	return ch, stop, nil
-}
-
-// InteractiveCommand runs a command locally, streaming output and accepting stdin input.
-// Returns: output channel, stdin channel (send lines to write to process stdin), stop func, error.
-func (c *LocalClient) InteractiveCommand(cmd string) (<-chan string, chan<- string, func(), error) {
-	command := exec.Command("sh", "-c", cmd)
-
-	pr, pw := io.Pipe()
-	command.Stdout = pw
-	command.Stderr = pw
-
-	stdinPipe, err := command.StdinPipe()
-	if err != nil {
-		pw.Close()
-		pr.Close()
-		return nil, nil, nil, fmt.Errorf("stdin pipe: %w", err)
-	}
-
-	if err := command.Start(); err != nil {
-		pw.Close()
-		pr.Close()
-		return nil, nil, nil, fmt.Errorf("start command: %w", err)
-	}
-
-	outCh := make(chan string, 64)
-	inCh := make(chan string, 16)
-
-	stop := func() {
-		stdinPipe.Close()
-		if command.Process != nil {
-			command.Process.Kill() //nolint:errcheck
-		}
-		pw.Close()
-	}
-
-	// Forward stdin lines to process
-	go func() {
-		defer stdinPipe.Close()
-		for line := range inCh {
-			fmt.Fprintln(stdinPipe, line) //nolint:errcheck
-		}
-	}()
-
-	go func() {
-		defer close(outCh)
-
-		go func() {
-			command.Wait() //nolint:errcheck
-			pw.Close()
-		}()
-
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			outCh <- scanner.Text()
-		}
-	}()
-
-	return outCh, inCh, stop, nil
-}
-
-// TailFile streams a file locally using tail -f.
-func (c *LocalClient) TailFile(path string) (<-chan string, func(), error) {
-	command := exec.Command("tail", "-f", path)
-
-	var buf bytes.Buffer
-	pr, pw := io.Pipe()
-	command.Stdout = pw
-	command.Stderr = &buf
-
-	if err := command.Start(); err != nil {
-		pw.Close()
-		return nil, nil, fmt.Errorf("start tail: %w", err)
-	}
-
-	ch := make(chan string, 128)
-	stop := func() {
-		if command.Process != nil {
-			command.Process.Kill() //nolint:errcheck
-		}
-		pw.Close()
-	}
-
-	go func() {
-		defer close(ch)
-		scanner := bufio.NewScanner(pr)
-		for scanner.Scan() {
-			ch <- scanner.Text()
-		}
-	}()
-
-	return ch, stop, nil
+		},
+	}, nil
 }

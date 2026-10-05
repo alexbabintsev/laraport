@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alexbabintsev/laradok/internal/docker"
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -119,10 +119,9 @@ func (s *FileBrowserScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		if s.loading {
-			if msg.String() == "ctrl+c" {
-				return s, tea.Quit
-			}
+		// While a listing loads (du over a large tree can be slow) only
+		// navigation away is allowed, so a slow directory never traps the user.
+		if s.loading && msg.String() != "ctrl+c" && msg.String() != "esc" {
 			return s, nil
 		}
 		switch msg.String() {

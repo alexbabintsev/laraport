@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -21,13 +21,13 @@ type cmdRow struct {
 
 // CommandsScreen shows a flat scrollable list of all commands grouped by section.
 type CommandsScreen struct {
-	groups   []config.CommandGroup
-	rows     []cmdRow
-	cmds     []config.Command // flat list of commands (parallel to cmdIdx)
-	selected int              // index in cmds
-	scrollOff int             // first visible row index
-	width    int
-	height   int
+	groups    []config.CommandGroup
+	rows      []cmdRow
+	cmds      []config.Command // flat list of commands (parallel to cmdIdx)
+	selected  int              // index in cmds
+	scrollOff int              // first visible row index
+	width     int
+	height    int
 }
 
 func NewCommandsScreen(groups []config.CommandGroup, width, height int) *CommandsScreen {
@@ -148,9 +148,9 @@ func (s *CommandsScreen) View() string {
 	title := styles.TitleBar.Render("Commands")
 
 	groupStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F1C40F")).Bold(true)
-	cmdStyle   := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
-	descStyle  := lipgloss.NewStyle().Foreground(styles.ColorText)
-	selStyle   := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
+	cmdStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#2ECC71"))
+	descStyle := lipgloss.NewStyle().Foreground(styles.ColorText)
+	selStyle := lipgloss.NewStyle().Background(lipgloss.Color("#1E3A5F")).Bold(true)
 
 	// Compute label column width for alignment
 	labelWidth := 0
@@ -215,9 +215,9 @@ func (s *CommandsScreen) View() string {
 	body := strings.Join(lines, "\n")
 
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

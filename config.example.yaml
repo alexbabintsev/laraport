@@ -1,7 +1,20 @@
-# laradok configuration
-# Place this file at ~/.config/laradok/config.yaml
-# or pass its path as the first argument: laradok /path/to/config.yaml
-# or set LARADOK_CONFIG=/path/to/config.yaml
+# laraport configuration
+# Place this file at ~/.config/laraport/config.yaml
+# or pass its path as the first argument: laraport /path/to/config.yaml
+# or set LARAPORT_CONFIG=/path/to/config.yaml
+#
+# Servers and settings can also be edited from the UI: on the server list press
+# a (add), e (edit), d (delete) or s (settings).
+
+# Application settings (all optional).
+settings:
+  downloads_dir: "~/Downloads"   # where dumps and archives are saved
+  host_key_check: accept-new     # accept-new | strict
+  # wrap_logs: true              # start log/output screens with wrapping on
+  # hide_stopped: true           # list running containers only
+  # stats_interval: 2            # Stats refresh, seconds
+  # no_sql_history: true         # do not save SQL query history
+  # sql_history_size: 200        # queries kept per database
 
 commands:
   - name: "Cache"
@@ -158,6 +171,10 @@ servers:
     user: "deploy"
     key: "~/.ssh/id_ed25519"
     type: ssh
+    # jump_host: "ops@bastion.example.com:2222"  # connect through an SSH bastion (like ssh -J)
+    # jump_key: "~/.ssh/bastion"    # key for the bastion (default: the key above, then ssh-agent)
+    # docker_cmd: "sudo -n docker"  # if your user is not in the docker group (or "podman")
+    # root_path: "/var/www/html"    # default app root for this server's containers
     containers:
       - name: "myapp-*"               # glob patterns supported
         display_name: "My App"

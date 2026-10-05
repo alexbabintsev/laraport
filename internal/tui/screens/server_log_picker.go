@@ -3,9 +3,9 @@ package screens
 import (
 	"fmt"
 
-	"github.com/alexbabintsev/laradok/internal/docker"
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,13 +13,14 @@ import (
 )
 
 type hostLogItem struct {
-	log docker.HostLog
+	log      docker.HostLog
+	counting bool // line count still being computed in the background
 }
 
 func (i hostLogItem) Title() string { return i.log.Service }
 func (i hostLogItem) Description() string {
 	size := formatBytes(i.log.Size)
-	lines := fmt.Sprintf("%d lines", i.log.Lines)
+	lines := lineCountLabel(i.log.Lines, i.counting)
 	created := i.log.CreatedAt.Format("2006-01-02 15:04")
 	modified := i.log.ModifiedAt.Format("2006-01-02 15:04")
 	return fmt.Sprintf("%s  •  %s  •  %s  •  created %s  •  modified %s", i.log.Path, size, lines, created, modified)
@@ -50,7 +51,7 @@ func NewServerLogPickerScreen(customLogs []string, width, height int) *ServerLog
 		Foreground(styles.ColorAccent).
 		BorderLeftForeground(styles.ColorPrimary)
 
-	l := list.New([]list.Item{}, delegate, width, height-6)
+	l := list.New([]list.Item{}, delegate, width, max(height-6, 1))
 	l.Title = "Server Logs"
 	l.Styles.Title = styles.TitleBar
 	l.SetShowStatusBar(false)
@@ -87,7 +88,7 @@ func (s *ServerLogPickerScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for _, p := range s.customLogs {
 			if !seen[p] {
-				allLogs = append(allLogs, docker.HostLog{Service: "custom", Path: p})
+				allLogs = append(allLogs, docker.HostLog{Service: "custom", Path: p, Lines: -1})
 			}
 		}
 		if len(allLogs) == 0 {
@@ -96,7 +97,7 @@ func (s *ServerLogPickerScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		items := make([]list.Item, len(allLogs))
 		for i, l := range allLogs {
-			items[i] = hostLogItem{log: l}
+			items[i] = hostLogItem{log: l, counting: l.Lines < 0}
 		}
 		cmd := s.list.SetItems(items)
 		return s, cmd
@@ -156,4 +157,33 @@ func (s *ServerLogPickerScreen) View() string {
 		return header + "\n\n  " + lipgloss.NewStyle().Foreground(styles.ColorDanger).Render(s.errMsg)
 	}
 	return s.list.View()
+}
+
+// LogPaths returns the paths of the listed logs.
+func (s *ServerLogPickerScreen) LogPaths() []string {
+	var paths []string
+	for _, it := range s.list.Items() {
+		paths = append(paths, it.(hostLogItem).log.Path)
+	}
+	return paths
+}
+
+// SetLineCount records a background line count for path.
+func (s *ServerLogPickerScreen) SetLineCount(path string, lines int) {
+	for i, it := range s.list.Items() {
+		if item := it.(hostLogItem); item.log.Path == path {
+			item.log.Lines, item.counting = lines, false
+			s.list.SetItem(i, item)
+		}
+	}
+}
+
+// LineCountDone marks every still-uncounted log as unknown.
+func (s *ServerLogPickerScreen) LineCountDone() {
+	for i, it := range s.list.Items() {
+		if item := it.(hostLogItem); item.counting {
+			item.counting = false
+			s.list.SetItem(i, item)
+		}
+	}
 }

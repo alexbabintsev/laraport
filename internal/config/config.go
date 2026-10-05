@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,13 +19,21 @@ const (
 
 type Server struct {
 	Name       string            `yaml:"name"`
-	Host       string            `yaml:"host"`
-	Port       int               `yaml:"port"`
-	User       string            `yaml:"user"`
-	Key        string            `yaml:"key"`
-	Passphrase string            `yaml:"passphrase"`
+	Host       string            `yaml:"host,omitempty"`
+	Port       int               `yaml:"port,omitempty"`
+	User       string            `yaml:"user,omitempty"`
+	Key        string            `yaml:"key,omitempty"`
+	Passphrase string            `yaml:"passphrase,omitempty"`
 	Type       ServerType        `yaml:"type"`
-	Containers []ContainerConfig `yaml:"containers"`
+	JumpHost   string            `yaml:"jump_host,omitempty"`  // SSH bastion, [user@]host[:port] (like ProxyJump)
+	JumpKey    string            `yaml:"jump_key,omitempty"`   // key for the bastion (default: the server's key, then ssh-agent)
+	DockerCmd  string            `yaml:"docker_cmd,omitempty"` // docker CLI invocation, e.g. "sudo -n docker" or "podman" (default "docker")
+	RootPath   string            `yaml:"root_path,omitempty"`  // default app root for this server's containers
+	Containers []ContainerConfig `yaml:"containers,omitempty"`
+
+	// implicit marks the Local server added when the config defines none; it
+	// is not written back by Save unless it gained container settings.
+	implicit bool
 }
 
 // FindContainerConfig returns the ContainerConfig matching a docker container name.
@@ -56,7 +65,7 @@ func (s Server) FindContainerConfig(containerName string) (ContainerConfig, bool
 type Command struct {
 	Label string `yaml:"label"`
 	Cmd   string `yaml:"cmd"`
-	Desc  string `yaml:"desc"`
+	Desc  string `yaml:"desc,omitempty"`
 }
 
 type CommandGroup struct {
@@ -66,18 +75,19 @@ type CommandGroup struct {
 
 // ContainerConfig holds per-container overrides within a server.
 type ContainerConfig struct {
-	Name           string         `yaml:"name"`            // docker container name or ID prefix to match
-	DisplayName    string         `yaml:"display_name"`    // custom display name
-	Favorite       bool           `yaml:"favorite"`        // show with star, yellow, sorted to top
-	Hidden         bool           `yaml:"hidden"`          // hide from container list
-	RootPath   string         `yaml:"root_path"`  // custom path to app root (default: /var/www/html)
-	CustomLogs []string       `yaml:"custom_logs"` // extra log file paths inside the container
-	Commands   []CommandGroup `yaml:"commands"`    // configurable command groups for the Commands screen
+	Name        string         `yaml:"name"`                   // docker container name or ID prefix to match
+	DisplayName string         `yaml:"display_name,omitempty"` // custom display name
+	Favorite    bool           `yaml:"favorite,omitempty"`     // show with star, yellow, sorted to top
+	Hidden      bool           `yaml:"hidden,omitempty"`       // hide from container list
+	RootPath    string         `yaml:"root_path,omitempty"`    // custom path to app root (default: /var/www/html)
+	CustomLogs  []string       `yaml:"custom_logs,omitempty"`  // extra log file paths inside the container
+	Commands    []CommandGroup `yaml:"commands,omitempty"`     // configurable command groups for the Commands screen
 }
 
 type Config struct {
-	Servers  []Server       `yaml:"servers"`
-	Commands []CommandGroup `yaml:"commands"`
+	Settings Settings       `yaml:"settings,omitempty"`
+	Servers  []Server       `yaml:"servers,omitempty"`
+	Commands []CommandGroup `yaml:"commands,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
@@ -94,15 +104,10 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Expand ~ in key paths
-	for i, s := range cfg.Servers {
-		if len(s.Key) > 0 && s.Key[0] == '~' {
-			home, err := os.UserHomeDir()
-			if err == nil {
-				cfg.Servers[i].Key = filepath.Join(home, s.Key[1:])
-			}
-		}
-		if cfg.Servers[i].Port == 0 {
+	for i := range cfg.Servers {
+		cfg.Servers[i].Key = expandHome(cfg.Servers[i].Key)
+		cfg.Servers[i].JumpKey = expandHome(cfg.Servers[i].JumpKey)
+		if cfg.Servers[i].Type == ServerTypeSSH && cfg.Servers[i].Port == 0 {
 			cfg.Servers[i].Port = 22
 		}
 	}
@@ -110,12 +115,26 @@ func Load(path string) (*Config, error) {
 	// If no servers defined, add a local server
 	if len(cfg.Servers) == 0 {
 		cfg.Servers = append(cfg.Servers, Server{
-			Name: "Local",
-			Type: ServerTypeLocal,
+			Name:     "Local",
+			Type:     ServerTypeLocal,
+			implicit: true,
 		})
 	}
 
 	return cfg, nil
+}
+
+// expandHome expands a leading "~" or "~/" to the home directory. "~user"
+// forms are left untouched.
+func expandHome(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, p[1:])
 }
 
 func DefaultConfigPath() string {
@@ -123,5 +142,130 @@ func DefaultConfigPath() string {
 	if err != nil {
 		return "config.yaml"
 	}
-	return filepath.Join(home, ".config", "laradok", "config.yaml")
+	return filepath.Join(home, ".config", "laraport", "config.yaml")
+}
+
+// Save writes the config back to disk as YAML. It re-collapses absolute SSH key
+// paths under the home directory back to "~/…" so saving doesn't bake in an
+// absolute path that Load expanded. The whole file is rewritten, so any
+// comments or custom formatting in the original are not preserved.
+//
+// The first rewrite keeps the original as <path>.bak.
+//
+// The file may hold SSH key passphrases, so it is written with mode 0600, and
+// atomically (temp file + rename) so a crash cannot leave it truncated. If
+// path is a symlink (e.g. a dotfiles checkout), the link target is updated.
+func (c *Config) Save(path string) error {
+	// Work on a copy so the in-memory (expanded) paths keep working.
+	out := *c
+	out.Servers = nil
+	home, _ := os.UserHomeDir()
+	for _, s := range c.Servers {
+		if s.implicit {
+			continue
+		}
+		for _, k := range []*string{&s.Key, &s.JumpKey} {
+			if home != "" && strings.HasPrefix(*k, home+string(filepath.Separator)) {
+				*k = "~" + strings.TrimPrefix(*k, home)
+			}
+		}
+		out.Servers = append(out.Servers, s)
+	}
+
+	data, err := yaml.Marshal(&out)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	if err := backupOnce(path); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, data)
+}
+
+// backupOnce copies an existing config to <path>.bak (mode 0600) the first
+// time laraport rewrites it, since Save drops comments and formatting. An
+// existing backup is never overwritten.
+func backupOnce(path string) error {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil // nothing to back up yet
+	}
+	if err != nil {
+		return fmt.Errorf("reading %s for backup: %w", path, err)
+	}
+	f, err := os.OpenFile(path+".bak", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("creating backup: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return fmt.Errorf("writing backup: %w", err)
+	}
+	return f.Close()
+}
+
+// writeFileAtomic replaces path (or the file it links to) with data, mode 0600.
+func writeFileAtomic(path string, data []byte) error {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp") // mode 0600
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
+}
+
+// UpsertContainerConfig stores per-container overrides for the named server,
+// matching by exact container name. If an exact-name entry exists it is updated
+// in place; otherwise a new entry is appended (so it takes precedence over any
+// glob rule). Returns false if the server is not found.
+func (c *Config) UpsertContainerConfig(serverName string, cc ContainerConfig) bool {
+	for si := range c.Servers {
+		if c.Servers[si].Name != serverName {
+			continue
+		}
+		for ci := range c.Servers[si].Containers {
+			if c.Servers[si].Containers[ci].Name == cc.Name {
+				// Preserve existing command groups / custom logs not edited here.
+				existing := c.Servers[si].Containers[ci]
+				cc.Commands = existing.Commands
+				cc.CustomLogs = existing.CustomLogs
+				c.Servers[si].Containers[ci] = cc
+				c.Servers[si].implicit = false
+				return true
+			}
+		}
+		c.Servers[si].Containers = append(c.Servers[si].Containers, cc)
+		// A container override must survive Save, so the server is now part
+		// of the written config.
+		c.Servers[si].implicit = false
+		return true
+	}
+	return false
 }

@@ -4,18 +4,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// DBListScreen shows discovered databases for the active PostgreSQL container.
+// DBListScreen shows discovered databases for the active database container.
 type DBListScreen struct {
 	databases  []string
 	user       string
 	password   string
+	engine     docker.DBEngine
 	historyKey string // prefix "serverName/containerName" — dbName appended on select
 	selected   int
 	scrollOff  int
@@ -26,12 +28,13 @@ type DBListScreen struct {
 	height     int
 }
 
-func NewDBListScreen(historyKeyPrefix string, width, height int) *DBListScreen {
+func NewDBListScreen(historyKeyPrefix string, engine docker.DBEngine, width, height int) *DBListScreen {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = styles.SpinnerStyle
 	return &DBListScreen{
 		historyKey: historyKeyPrefix,
+		engine:     engine,
 		loading:    true,
 		sp:         sp,
 		width:      width,
@@ -85,7 +88,11 @@ func (s *DBListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		s.databases = msg.Databases
 		if len(s.databases) == 0 {
-			s.errMsg = "no databases found"
+			if s.engine == docker.EngineSQLite {
+				s.errMsg = "no .sqlite/.db files found under the app root"
+			} else {
+				s.errMsg = "no databases found"
+			}
 		}
 		return s, nil
 
@@ -131,7 +138,7 @@ func (s *DBListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				pass := s.password
 				hk := strings.TrimRight(s.historyKey, "/") + "/" + db
 				return s, func() tea.Msg {
-					return msgs.PushDBActionsMsg{DBName: db, User: user, Password: pass, HistoryKey: hk}
+					return msgs.PushDBActionsMsg{DBName: db, User: user, Password: pass, Engine: s.engine, HistoryKey: hk}
 				}
 			}
 		}
@@ -144,12 +151,17 @@ func (s *DBListScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (s *DBListScreen) View() string {
-	title := styles.TitleBar.Render("PostgreSQL Databases")
+	title := styles.TitleBar.Render(s.engine.Label() + " Databases")
+
+	loadingMsg := " detecting credentials and listing databases..."
+	if s.engine == docker.EngineSQLite {
+		loadingMsg = " searching for SQLite database files..."
+	}
 
 	var body string
 	if s.loading {
 		body = lipgloss.NewStyle().Padding(1, 2).Render(
-			s.sp.View() + " detecting credentials and listing databases...",
+			s.sp.View() + loadingMsg,
 		)
 	} else if s.errMsg != "" {
 		body = lipgloss.NewStyle().Padding(1, 2).
@@ -188,9 +200,9 @@ func (s *DBListScreen) View() string {
 		)
 	} else {
 		helpStr = styles.StatusBar.Width(s.width).Render(
-			styles.StatusBarKey.Render("↑↓")+" navigate  "+
-				styles.StatusBarKey.Render("enter")+" select  "+
-				styles.StatusBarKey.Render("esc")+" back",
+			styles.StatusBarKey.Render("↑↓") + " navigate  " +
+				styles.StatusBarKey.Render("enter") + " select  " +
+				styles.StatusBarKey.Render("esc") + " back",
 		)
 	}
 

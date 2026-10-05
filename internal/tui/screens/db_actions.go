@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alexbabintsev/laradok/internal/docker"
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -14,7 +14,7 @@ import (
 type dbAction struct {
 	label string
 	desc  string
-	// sqlQuery is non-empty for direct SQL execution via HostCmd.
+	// sqlQuery is non-empty for direct SQL execution on the host.
 	// If empty, the action is handled specially (download or SQL input).
 	sqlQuery string
 	// special action key
@@ -26,7 +26,18 @@ type dbActionGroup struct {
 	actions []dbAction
 }
 
-func buildDBActionGroups(dbName string) []dbActionGroup {
+// buildDBActionGroups dispatches to the engine-specific action groups.
+func buildDBActionGroups(engine docker.DBEngine, dbName string) []dbActionGroup {
+	if engine == docker.EngineSQLite {
+		return buildSQLiteActionGroups()
+	}
+	if engine.IsMySQLFamily() {
+		return buildMySQLActionGroups(dbName)
+	}
+	return buildPostgresActionGroups(dbName)
+}
+
+func buildPostgresActionGroups(dbName string) []dbActionGroup {
 	db := strings.ReplaceAll(dbName, "'", "''") // SQL-escape for inline literals
 	return []dbActionGroup{
 		{
@@ -174,6 +185,7 @@ type DBActionsScreen struct {
 	containerID string
 	user        string
 	password    string
+	engine      docker.DBEngine
 	historyKey  string
 	rows        []dbActionRow
 	actions     []dbAction
@@ -183,12 +195,13 @@ type DBActionsScreen struct {
 	height      int
 }
 
-func NewDBActionsScreen(dbName, user, password, containerID, historyKey string, width, height int) *DBActionsScreen {
+func NewDBActionsScreen(dbName, user, password, containerID string, engine docker.DBEngine, historyKey string, width, height int) *DBActionsScreen {
 	s := &DBActionsScreen{
 		dbName:      dbName,
 		containerID: containerID,
 		user:        user,
 		password:    password,
+		engine:      engine,
 		historyKey:  historyKey,
 		width:       width,
 		height:      height,
@@ -200,7 +213,7 @@ func NewDBActionsScreen(dbName, user, password, containerID, historyKey string, 
 func (s *DBActionsScreen) buildRows(dbName string) {
 	s.rows = nil
 	s.actions = nil
-	for _, g := range buildDBActionGroups(dbName) {
+	for _, g := range buildDBActionGroups(s.engine, dbName) {
 		s.rows = append(s.rows, dbActionRow{isHeader: true, label: g.name, idx: -1})
 		for _, a := range g.actions {
 			s.rows = append(s.rows, dbActionRow{action: a, idx: len(s.actions)})
@@ -282,34 +295,30 @@ func (s *DBActionsScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			user := s.user
 			pass := s.password
 
+			engine := s.engine
 			switch a.special {
 			case "sql_input":
 				hk := s.historyKey
 				return s, func() tea.Msg {
-					return msgs.PushSQLInputMsg{DBName: dbName, User: user, Password: pass, HistoryKey: hk}
+					return msgs.PushSQLInputMsg{DBName: dbName, User: user, Password: pass, Engine: engine, HistoryKey: hk}
 				}
 			case "download":
 				return s, func() tea.Msg {
-					return msgs.PushDBDownloadMsg{DBName: dbName, User: user, Password: pass, CustomFormat: false, Inserts: false}
+					return msgs.PushDBDownloadMsg{DBName: dbName, User: user, Password: pass, Engine: engine, CustomFormat: false, Inserts: false}
 				}
 			case "download_inserts":
 				return s, func() tea.Msg {
-					return msgs.PushDBDownloadMsg{DBName: dbName, User: user, Password: pass, CustomFormat: false, Inserts: true}
+					return msgs.PushDBDownloadMsg{DBName: dbName, User: user, Password: pass, Engine: engine, CustomFormat: false, Inserts: true}
 				}
 			case "download_custom":
 				return s, func() tea.Msg {
-					return msgs.PushDBDownloadMsg{DBName: dbName, User: user, Password: pass, CustomFormat: true, Inserts: false}
+					return msgs.PushDBDownloadMsg{DBName: dbName, User: user, Password: pass, Engine: engine, CustomFormat: true, Inserts: false}
 				}
 			default:
-				// Direct SQL via HostCmd — use docker exec -e to avoid shell quoting issues.
-				hostCmd := fmt.Sprintf(
-					`docker exec -e PGPASSWORD=%s -e PGUSER=%s %s psql -d %s -c %s`,
-					docker.ShellQuote(pass), docker.ShellQuote(user), s.containerID,
-					docker.ShellQuote(dbName), docker.ShellQuote(a.sqlQuery),
-				)
+				hostCmd := docker.DBExecHostCmd(engine, s.containerID, user, pass, dbName, a.sqlQuery)
 				title := a.label + " — " + dbName
 				return s, func() tea.Msg {
-					return msgs.PushOutputMsg{Title: title, HostCmd: hostCmd}
+					return msgs.PushOutputMsg{Title: title, Host: hostCmd}
 				}
 			}
 		}
@@ -377,9 +386,9 @@ func (s *DBActionsScreen) View() string {
 
 	body := strings.Join(lines, "\n")
 	help := styles.StatusBar.Width(s.width).Render(
-		styles.StatusBarKey.Render("↑↓")+" navigate  "+
-			styles.StatusBarKey.Render("enter")+" run  "+
-			styles.StatusBarKey.Render("esc")+" back",
+		styles.StatusBarKey.Render("↑↓") + " navigate  " +
+			styles.StatusBarKey.Render("enter") + " run  " +
+			styles.StatusBarKey.Render("esc") + " back",
 	)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, title, "", body)

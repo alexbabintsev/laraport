@@ -1,0 +1,69 @@
+name: test
+
+on:
+  # Branches are tested through their pull request; push covers main only,
+  # so each change runs once.
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Unit tests (race detector)
+        run: go test -race -count=1 ./...
+
+  integration:
+    # Real containers: busybox, dash and bash shells, Postgres, MariaDB,
+    # Redis and MongoDB with hostile file names and passwords; real OpenSSH
+    # servers for the jump host (bastion) path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Pull test images
+        run: |
+          for i in alpine:3.20 debian:bookworm-slim fedora:latest postgres:16-alpine mariadb:11 redis:7-alpine mongo:7; do
+            docker pull -q "$i"
+          done
+
+      - name: Integration tests
+        env:
+          LARAPORT_INTEGRATION: "1"
+        run: go test -race -count=1 ./internal/docker/ ./internal/connection/
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

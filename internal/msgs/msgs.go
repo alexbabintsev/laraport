@@ -1,8 +1,9 @@
 package msgs
 
 import (
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // --- Navigation messages ---
@@ -30,12 +31,163 @@ type PushCommandsMsg struct {
 type PushOutputMsg struct {
 	Title      string
 	ArtisanCmd string
-	RawCmd     string  // executed inside the container via docker exec
-	HostCmd    string  // executed directly on the host (for docker inspect, restart, etc.)
+	RawCmd     string             // executed inside the container (in the app root) via docker exec
+	Host       docker.HostCommand // executed directly on the host (docker inspect, SQL clients, …)
 }
 
 // PushDockerCmdMsg navigates to the docker commands screen.
 type PushDockerCmdMsg struct{}
+
+// PushInfoMsg navigates to the container info (docker inspect) screen.
+type PushInfoMsg struct{}
+
+// PushStatsMsg navigates to the live stats (graphs) screen.
+type PushStatsMsg struct{}
+
+// OpenTerminalMsg requests an interactive shell session inside the active
+// container. The App suspends the TUI and hands the terminal to the shell.
+type OpenTerminalMsg struct{}
+
+// TerminalFinishedMsg is sent after the interactive shell exits and the TUI
+// has resumed. Err is non-nil if the shell could not be started.
+type TerminalFinishedMsg struct {
+	Err error
+}
+
+// StatsTickMsg signals the stats screen wants the next docker stats sample.
+// The App handles it by sampling and replying with StatsSampleMsg. SortProcs
+// selects the process-table ordering for that sample.
+type StatsTickMsg struct {
+	SortProcs docker.ProcSortBy
+}
+
+// StatsSampleMsg carries one live stats reading (and process table) for the
+// stats screen.
+type StatsSampleMsg struct {
+	Sample docker.LiveSample
+	Procs  []docker.ProcessInfo
+	Err    error
+}
+
+// ContainerInfoLoadedMsg carries parsed `docker inspect` data for the info screen.
+type ContainerInfoLoadedMsg struct {
+	Info docker.ContainerInfo
+	Err  error
+}
+
+// PushGlobalCmdMsg navigates to the global (server-level) docker commands screen.
+type PushGlobalCmdMsg struct{}
+
+// PushConfirmMsg navigates to a yes/no confirmation screen. On confirmation the
+// embedded Run message is dispatched; on cancel the screen is popped.
+type PushConfirmMsg struct {
+	Title  string
+	Detail string        // the exact command or consequence shown to the user
+	Run    PushOutputMsg // dispatched when the user confirms (a command to run)
+	Then   tea.Msg       // dispatched instead of Run when set (any other action)
+}
+
+// ConfirmedMsg is emitted by the confirmation screen when the user accepts.
+// The App pops the confirm screen and dispatches Then if set, otherwise Run.
+type ConfirmedMsg struct {
+	Run  PushOutputMsg
+	Then tea.Msg
+}
+
+// --- Server management ---
+
+// PushServerEditMsg opens the server form; Original is "" for a new server.
+type PushServerEditMsg struct {
+	Original string
+	Server   config.Server
+}
+
+// SaveServerMsg asks the App to store a server (add when Original is "").
+type SaveServerMsg struct {
+	Original string
+	Server   config.Server
+}
+
+// ServerSavedMsg reports the result of SaveServerMsg to the form.
+type ServerSavedMsg struct {
+	Err error
+}
+
+// DeleteServerMsg removes a server from the config (sent after confirmation).
+type DeleteServerMsg struct {
+	Name string
+}
+
+// ServerListChangedMsg carries the updated server list (and a status line)
+// after a server was added, edited or deleted.
+type ServerListChangedMsg struct {
+	Servers []config.Server
+	Status  string
+	Err     error
+}
+
+// TestConnectionMsg asks the App to try connecting to a server.
+type TestConnectionMsg struct {
+	Server config.Server
+}
+
+// ConnectionTestedMsg reports the result of TestConnectionMsg.
+type ConnectionTestedMsg struct {
+	Result string // e.g. "Docker 27.1.1"
+	Err    error
+}
+
+// --- Settings ---
+
+// PushSettingsMsg opens the settings screen.
+type PushSettingsMsg struct{}
+
+// SaveSettingsMsg asks the App to store new settings.
+type SaveSettingsMsg struct {
+	Settings config.Settings
+}
+
+// SettingsSavedMsg reports the result of SaveSettingsMsg.
+type SettingsSavedMsg struct {
+	Err error
+}
+
+// ClearSQLHistoryMsg deletes the persisted SQL history.
+type ClearSQLHistoryMsg struct{}
+
+// SQLHistoryClearedMsg reports the result of ClearSQLHistoryMsg.
+type SQLHistoryClearedMsg struct {
+	Err error
+}
+
+// PushRedisCmdMsg navigates to the Redis commands screen.
+type PushRedisCmdMsg struct{}
+
+// RedisReadyMsg carries the detected Redis password (empty = no auth).
+type RedisReadyMsg struct {
+	ContainerID string
+	Password    string
+}
+
+// PushRedisDumpMsg triggers an RDB snapshot download for the active container.
+type PushRedisDumpMsg struct{}
+
+// PushMongoDumpMsg triggers a mongodump archive download for the active container.
+type PushMongoDumpMsg struct {
+	User     string
+	Password string
+}
+
+// PushMongoCmdMsg navigates to the MongoDB commands screen.
+type PushMongoCmdMsg struct {
+	MongoBin string // "mongosh" or "mongo"
+}
+
+// MongoReadyMsg carries detected MongoDB credentials (empty = unauthenticated).
+type MongoReadyMsg struct {
+	User     string
+	Password string
+}
 
 // PushArtisanCmdMsg navigates to the artisan command input screen (autocomplete).
 type PushArtisanCmdMsg struct{}
@@ -62,9 +214,9 @@ type PushServerLogPickerMsg struct{}
 
 // PushLogTailMsg navigates to the log tail screen.
 type PushLogTailMsg struct {
-	LogType    string // "docker" = container stdout; "host" = host file; empty = file inside container
-	FilePath   string // path to tail (inside container or on host)
-	Title      string // display title
+	LogType  string // "docker" = container stdout; "host" = host file; empty = file inside container
+	FilePath string // path to tail (inside container or on host)
+	Title    string // display title
 }
 
 // LogFilesLoadedMsg carries the result of listing log files in the container.
@@ -103,21 +255,41 @@ type LoadMoreLinesMsg struct {
 	SessionID uint64
 }
 
-// LogTailInitMsg carries the total line count of the file after the tail starts.
+// LogTailInitMsg tells the log tail screen where in the file its initial
+// lines come from (byte offsets).
 type LogTailInitMsg struct {
-	TotalLines int
-	TopLine    int // 1-based line number of the first line currently shown
-	SessionID  uint64
+	Pos       docker.LogPosition
+	SessionID uint64
 }
 
 // LogChunkLoadedMsg carries a batch of earlier lines loaded on demand.
 type LogChunkLoadedMsg struct {
-	Lines      []string
-	AtTop      bool // true when we've reached the beginning of the file
-	TotalLines int  // total lines in the file at time of load
-	TopLine    int  // 1-based line number of the first line in Lines
-	SessionID  uint64
-	Err        error
+	Lines     []string
+	Start     int64 // byte offset where Lines[0] starts
+	AtTop     bool  // true when the beginning of the file has been reached
+	SessionID uint64
+	Err       error
+}
+
+// LineCountStartedMsg reports that background line counting for a log
+// picker started (or failed to).
+type LineCountStartedMsg struct {
+	ID   uint64
+	Ch   <-chan string
+	Stop func()
+	Err  error
+}
+
+// LineCountMsg carries the line count of one file.
+type LineCountMsg struct {
+	ID    uint64
+	Path  string
+	Lines int
+}
+
+// LineCountDoneMsg signals that background line counting finished.
+type LineCountDoneMsg struct {
+	ID uint64
 }
 
 // --- Streaming messages ---
@@ -133,6 +305,18 @@ type OutputDoneMsg struct {
 	SessionID uint64
 }
 
+// StreamStartedMsg reports that an output stream (command output, log tail,
+// download) started for session SessionID — or failed to start.
+type StreamStartedMsg struct {
+	SessionID uint64
+	Ch        <-chan string
+	Stop      func()
+	Err       error
+	// Log tails of a file: byte position info for lazy loading of earlier
+	// lines (nil for streams without a file position).
+	LogPos *docker.LogPosition
+}
+
 // RawCmdStartMsg signals that an interactive command has started.
 type RawCmdStartMsg struct {
 	OutCh     <-chan string
@@ -145,12 +329,15 @@ type RawCmdStartMsg struct {
 // ContainerCapsLoadedMsg carries the detected capabilities of the active container.
 type ContainerCapsLoadedMsg struct {
 	Caps docker.ContainerCaps
+	Err  error
 }
 
 // PushDBScreenMsg navigates to the database list screen for the active container.
-type PushDBScreenMsg struct{}
+type PushDBScreenMsg struct {
+	Engine docker.DBEngine
+}
 
-// DBCredsLoadedMsg carries detected PostgreSQL credentials.
+// DBCredsLoadedMsg carries detected database credentials.
 type DBCredsLoadedMsg struct {
 	User     string
 	Password string
@@ -168,6 +355,7 @@ type PushDBActionsMsg struct {
 	DBName     string
 	User       string
 	Password   string
+	Engine     docker.DBEngine
 	HistoryKey string // "serverName/containerName/dbName"
 }
 
@@ -176,6 +364,7 @@ type PushSQLInputMsg struct {
 	DBName     string
 	User       string
 	Password   string
+	Engine     docker.DBEngine
 	HistoryKey string   // "serverName/containerName/dbName"
 	History    []string // previously executed queries, most recent last
 }
@@ -186,16 +375,18 @@ type PushSQLExecMsg struct {
 	DBName     string
 	User       string
 	Password   string
+	Engine     docker.DBEngine
 	SQL        string
 	HistoryKey string   // passed through so App can persist on execution
 	History    []string // updated history to pass back on return
 }
 
-// PushDBDownloadMsg triggers a pg_dump download for the given database.
+// PushDBDownloadMsg triggers a database dump download for the given database.
 type PushDBDownloadMsg struct {
 	DBName       string
 	User         string
 	Password     string
+	Engine       docker.DBEngine
 	CustomFormat bool // true = pg_dump -Fc (.dump), false = plain SQL gzipped (.sql.gz)
 	Inserts      bool // true = add --inserts --column-inserts (slower, more portable)
 }
@@ -236,9 +427,33 @@ type ContainersLoadedMsg struct {
 	Err        error
 }
 
+// PushContainerEditMsg opens the per-container config editor for a container.
+type PushContainerEditMsg struct {
+	ContainerName string
+	Config        config.ContainerConfig
+}
+
+// SaveContainerConfigMsg requests writing the edited container config to disk.
+type SaveContainerConfigMsg struct {
+	Config config.ContainerConfig
+}
+
+// ContainerConfigSavedMsg reports the result of writing the config.
+type ContainerConfigSavedMsg struct {
+	Err error
+}
+
+// ContainerStatsLoadedMsg carries live resource stats for all containers,
+// loaded lazily after the container list is shown. Keyed by name and short ID.
+type ContainerStatsLoadedMsg struct {
+	Stats map[string]docker.ContainerStat
+	Err   error
+}
+
 // ServerConnectedMsg is returned after an async SSH (or local) connection attempt.
 type ServerConnectedMsg struct {
-	Server config.Server
-	Runner docker.Runner
-	Err    error
+	Server  config.Server
+	Runner  docker.Runner
+	Err     error
+	Attempt uint64 // matches App.connectAttempt for the current attempt
 }

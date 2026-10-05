@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,25 +14,27 @@ import (
 
 // LogTailScreen streams output (file log or docker logs) in real-time.
 type LogTailScreen struct {
-	title          string
-	vp             viewport.Model
-	sp             spinner.Model
-	lines          []string
-	active         bool
-	follow         bool // auto-scroll to bottom; paused when user scrolls up
-	wrap           bool
-	atTop          bool // true when we've loaded all the way to the beginning of the file
-	loading        bool // true while a chunk is being loaded
-	totalFileLines int  // total lines in the file (0 = unknown / docker logs)
-	bufferTopLine  int  // 1-based file line number of lines[0] (0 = unknown)
-	initLineCount  int  // number of initial lines expected (don't increment total for these)
-	sessionID      uint64
-	width          int
-	height         int
+	title         string
+	vp            viewport.Model
+	sp            spinner.Model
+	lines         []string
+	active        bool
+	follow        bool // auto-scroll to bottom; paused when user scrolls up
+	wrap          bool
+	atTop         bool   // true when we've loaded all the way to the beginning of the file
+	loading       bool   // true while a chunk is being loaded
+	loadErr       string // last chunk load error
+	hasPos        bool   // byte positions known (file logs; false for docker logs)
+	bufStart      int64  // byte offset of lines[0] in the file
+	fileSize      int64  // bytes in the file, grown as followed lines arrive
+	initLineCount int    // initial lines still expected (already included in fileSize)
+	sessionID     uint64
+	width         int
+	height        int
 }
 
 func NewLogTailScreen(title string, width, height int) *LogTailScreen {
-	vp := viewport.New(width-4, height-4)
+	vp := viewport.New(max(width-4, 1), max(height-4, 1))
 	vp.Style = styles.OutputStyle
 
 	sp := spinner.New()
@@ -53,9 +55,9 @@ func NewLogTailScreen(title string, width, height int) *LogTailScreen {
 func (s *LogTailScreen) setContent() {
 	if s.wrap {
 		// vp.Width is the outer width; OutputStyle has border(2) + padding(2) = 4 chars overhead
-		s.vp.SetContent(wrapLines(s.lines, s.vp.Width-4))
+		setViewportContent(&s.vp, wrapLines(s.lines, max(s.vp.Width-4, 1)))
 	} else {
-		s.vp.SetContent(strings.Join(s.lines, "\n"))
+		setViewportContent(&s.vp, strings.Join(s.lines, "\n"))
 	}
 }
 
@@ -66,23 +68,21 @@ func (s *LogTailScreen) Init() tea.Cmd {
 func (s *LogTailScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgs.LogTailInitMsg:
-		s.totalFileLines = msg.TotalLines
-		s.bufferTopLine = msg.TopLine
-		// The initial batch has (total - topLine + 1) lines already counted in totalFileLines
-		s.initLineCount = msg.TotalLines - msg.TopLine + 1
-		// If we loaded from line 1, we're already at the top — no further chunks to load.
-		if msg.TopLine <= 1 {
-			s.atTop = true
-		}
+		s.hasPos = true
+		s.bufStart = msg.Pos.Start
+		s.fileSize = msg.Pos.End
+		s.initLineCount = msg.Pos.InitialLines
+		// Loaded from the first byte: nothing earlier to load.
+		s.atTop = msg.Pos.Start == 0
 		return s, nil
 
 	case msgs.OutputLineMsg:
 		s.sessionID = msg.SessionID
 		s.lines = append(s.lines, msg.Line)
 		if s.initLineCount > 0 {
-			s.initLineCount-- // initial batch line, already counted
-		} else if s.totalFileLines > 0 {
-			s.totalFileLines++ // truly new line, file grew
+			s.initLineCount-- // initial batch line, already within fileSize
+		} else if s.hasPos {
+			s.fileSize += int64(len(msg.Line)) + 1 // followed line: the file grew
 		}
 		s.setContent()
 		if s.follow {
@@ -96,12 +96,14 @@ func (s *LogTailScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.LogChunkLoadedMsg:
 		s.loading = false
-		if msg.Err == nil && len(msg.Lines) > 0 {
+		s.loadErr = ""
+		if msg.Err != nil {
+			s.loadErr = msg.Err.Error()
+			return s, nil
+		}
+		if len(msg.Lines) > 0 {
 			s.atTop = msg.AtTop
-			s.bufferTopLine = msg.TopLine
-			if msg.TotalLines > 0 {
-				s.totalFileLines = msg.TotalLines
-			}
+			s.bufStart = msg.Start
 
 			// Save the current YOffset before changing content
 			prevOffset := s.vp.YOffset
@@ -147,8 +149,8 @@ func (s *LogTailScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = msg.Width
 		s.height = msg.Height
-		s.vp.Width = msg.Width - 4
-		s.vp.Height = msg.Height - 4
+		s.vp.Width = max(msg.Width-4, 1)
+		s.vp.Height = max(msg.Height-4, 1)
 		s.setContent()
 	}
 
@@ -159,7 +161,8 @@ func (s *LogTailScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Trigger preload when user scrolls up and approaches the top of the buffer.
 	// Only trigger when the viewport actually moved upward (not on every tick).
 	const preloadThreshold = 100
-	if !s.atTop && !s.loading && s.sessionID > 0 &&
+	// Only file logs (known byte positions) can page backwards.
+	if s.hasPos && !s.atTop && !s.loading && s.sessionID > 0 &&
 		s.vp.YOffset < preloadThreshold && s.vp.YOffset < prevOffset {
 		s.loading = true
 		sessionID := s.sessionID
@@ -169,16 +172,6 @@ func (s *LogTailScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return s, cmd
-}
-
-// visibleContentHeight returns the number of content lines the viewport displays
-// (viewport height minus the frame/border overhead from the style).
-func (s *LogTailScreen) visibleContentHeight() int {
-	h := s.vp.Height - s.vp.Style.GetVerticalFrameSize()
-	if h < 1 {
-		h = 1
-	}
-	return h
 }
 
 func (s *LogTailScreen) View() string {
@@ -206,33 +199,22 @@ func (s *LogTailScreen) View() string {
 		prefix := ""
 		if s.loading {
 			prefix = s.sp.View() + " loading…  "
-		} else if !s.atTop {
+		} else if s.hasPos && !s.atTop {
 			prefix = styles.DimStyle.Render("↑ more") + "  "
 		}
 
 		var stats string
-		if s.bufferTopLine > 0 {
-			// We know file positions — show current line at bottom of viewport
-			visH := s.visibleContentHeight()
-			bottomLine := s.bufferTopLine + s.vp.YOffset + visH - 1
-			total := s.totalFileLines
-			if total == 0 {
-				// Estimate: buffer covers from bufferTopLine to bufferTopLine+len(lines)-1
-				total = s.bufferTopLine + len(s.lines) - 1
-			}
-			if bottomLine > total {
-				bottomLine = total
-			}
-			if bottomLine < 1 {
-				bottomLine = 1
-			}
-			pct := bottomLine * 100 / total
-			stats = fmt.Sprintf("line %d/%d  %d%%", bottomLine, total, pct)
-			lineInfo = prefix + styles.DimStyle.Render(stats)
+		if s.hasPos && s.fileSize > 0 {
+			// Position of the bottom of the view, interpolated over the bytes
+			// the buffer covers (bufStart … end of file).
+			pos := s.bufStart + int64(float64(s.fileSize-s.bufStart)*s.vp.ScrollPercent())
+			stats = fmt.Sprintf("%s / %s  %d%%", formatBytes(pos), formatBytes(s.fileSize), pos*100/s.fileSize)
 		} else {
-			// File position not yet known (counting or docker logs)
 			stats = fmt.Sprintf("%d lines  %.0f%%", len(s.lines), s.vp.ScrollPercent()*100)
-			lineInfo = prefix + styles.DimStyle.Render(stats)
+		}
+		lineInfo = prefix + styles.DimStyle.Render(stats)
+		if s.loadErr != "" {
+			lineInfo += "  " + styles.ErrorStyle.Render("load failed: "+s.loadErr)
 		}
 	}
 
@@ -258,4 +240,11 @@ func (s *LogTailScreen) View() string {
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, "", vpView)
 	return styles.PinToBottom(s.height, content, help)
+}
+
+// SetWrap sets whether long lines are wrapped (the default comes from the
+// settings; f2 toggles it).
+func (s *LogTailScreen) SetWrap(on bool) {
+	s.wrap = on
+	s.setContent()
 }
