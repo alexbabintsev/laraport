@@ -46,8 +46,7 @@ func TestListComposerCommandsSystemBinary(t *testing.T) {
 
 func TestResolveComposerPhar(t *testing.T) {
 	_, r := fakeDocker(t)
-	// Hide any real composer on this machine.
-	t.Setenv("PATH", filepath.Dir(mustLookDocker(t))+string(os.PathListSeparator)+"/usr/bin:/bin")
+	isolatePath(t, "sh") // no real composer, wherever the tests run
 	root := filepath.Join(t.TempDir(), "my app")
 	os.MkdirAll(root, 0o755)
 	os.WriteFile(filepath.Join(root, "composer.phar"), nil, 0o644)
@@ -60,8 +59,7 @@ func TestResolveComposerPhar(t *testing.T) {
 
 func TestResolveComposerDownloadFailure(t *testing.T) {
 	_, r := fakeDocker(t)
-	fake := filepath.Dir(mustLookDocker(t))
-	t.Setenv("PATH", fake+string(os.PathListSeparator)+"/usr/bin:/bin")
+	isolatePath(t, "sh", "rm") // no real composer, wherever the tests run
 	// A php that fails like a signature mismatch would.
 	fakeBin(t, "php", `echo "composer installer signature mismatch" >&2; exit 1`)
 	root := t.TempDir()
@@ -72,6 +70,34 @@ func TestResolveComposerDownloadFailure(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "composer-setup.php")); err == nil {
 		t.Fatal("installer left behind")
 	}
+}
+
+// isolatePath restricts PATH to the fake docker plus the named system tools,
+// so tools installed on the machine (e.g. composer on CI images) cannot leak
+// into a test.
+func isolatePath(t *testing.T, tools ...string) {
+	t.Helper()
+	fakeDir := filepath.Dir(mustLookDocker(t))
+	bin := filepath.Join(t.TempDir(), "isolated")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools {
+		found := false
+		for _, d := range []string{"/bin", "/usr/bin"} {
+			if _, err := os.Stat(filepath.Join(d, tool)); err == nil {
+				if err := os.Symlink(filepath.Join(d, tool), filepath.Join(bin, tool)); err != nil {
+					t.Fatal(err)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("system tool %s not found", tool)
+		}
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+bin)
 }
 
 func mustLookDocker(t *testing.T) string {

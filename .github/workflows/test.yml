@@ -1,8 +1,10 @@
 name: test
 
 on:
+  # Branches are tested through their pull request; push covers main only,
+  # so each change runs once.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 permissions:

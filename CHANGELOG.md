@@ -65,6 +65,7 @@ All notable changes to laraport are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- CI runs once per change (pull requests, plus pushes to `main`); unit tests no longer pick up tools installed on the CI image (e.g. `composer`)
 - **Renamed laradok → laraport** to avoid confusion with the well-known Laradock project: binary `laraport`, Go module `github.com/alexbabintsev/laraport`, Homebrew formula `alexbabintsev/tap/laraport`, config directory `~/.config/laraport/`, environment variable `LARAPORT_CONFIG`
 - README feature list covers server management, bastion, per-server docker command, settings and Terminal
 - Stats network/disk rates are computed over the time actually elapsed between samples, so they stay correct with any refresh interval
