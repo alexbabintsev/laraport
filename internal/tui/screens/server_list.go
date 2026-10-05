@@ -31,6 +31,9 @@ func (s serverItem) Description() string {
 	if s.server.Type == config.ServerTypeSSH {
 		desc = fmt.Sprintf("%s@%s:%d", s.server.User, s.server.Host, s.server.Port)
 	}
+	if s.server.Type == config.ServerTypeSSH && s.server.JumpHost != "" {
+		desc += "  ·  via " + s.server.JumpHost
+	}
 	if s.server.DockerCmd != "" {
 		desc += "  ·  " + s.server.DockerCmd
 	}

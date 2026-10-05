@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"testing"
@@ -32,6 +33,10 @@ type testSSHServer struct {
 	conns []net.Conn
 	// refuseSessions makes the server reject new session channels.
 	refuseSessions bool
+	// noForwarding makes the server reject direct-tcpip (jump host) channels.
+	noForwarding bool
+	// forwards counts tunnels opened through this server (as a jump host).
+	forwards int
 }
 
 func newTestSSHServer(t *testing.T) *testSSHServer {
@@ -138,8 +143,16 @@ func (s *testSSHServer) handle(nc net.Conn) {
 	}()
 	for nch := range chans {
 		s.mu.Lock()
-		refuse := s.refuseSessions
+		refuse, noFwd := s.refuseSessions, s.noForwarding
 		s.mu.Unlock()
+		if nch.ChannelType() == "direct-tcpip" {
+			if noFwd {
+				nch.Reject(ssh.Prohibited, "port forwarding is disabled") //nolint:errcheck
+				continue
+			}
+			go s.forward(nch)
+			continue
+		}
 		if nch.ChannelType() != "session" || refuse {
 			nch.Reject(ssh.Prohibited, "no sessions") //nolint:errcheck
 			continue
@@ -205,6 +218,47 @@ func (s *testSSHServer) session(ch ssh.Channel, reqs <-chan *ssh.Request) {
 	}
 }
 
+// forward serves a direct-tcpip channel like sshd does for `ssh -J`.
+func (s *testSSHServer) forward(nch ssh.NewChannel) {
+	var req struct {
+		Host     string
+		Port     uint32
+		OrigHost string
+		OrigPort uint32
+	}
+	if err := ssh.Unmarshal(nch.ExtraData(), &req); err != nil {
+		nch.Reject(ssh.ConnectionFailed, "bad request") //nolint:errcheck
+		return
+	}
+	target, err := net.Dial("tcp", net.JoinHostPort(req.Host, strconv.Itoa(int(req.Port))))
+	if err != nil {
+		nch.Reject(ssh.ConnectionFailed, err.Error()) //nolint:errcheck
+		return
+	}
+	ch, reqs, err := nch.Accept()
+	if err != nil {
+		target.Close()
+		return
+	}
+	s.mu.Lock()
+	s.forwards++
+	s.conns = append(s.conns, target) // dropped with the server's connections
+	s.mu.Unlock()
+	go ssh.DiscardRequests(reqs)
+	go func() {
+		io.Copy(target, ch) //nolint:errcheck
+		target.Close()
+	}()
+	io.Copy(ch, target) //nolint:errcheck
+	ch.Close()
+}
+
+func (s *testSSHServer) forwardCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.forwards
+}
+
 func sendExit(ch ssh.Channel, code int) {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, uint32(code))
@@ -220,7 +274,7 @@ func emptyKnownHosts(t *testing.T) string {
 // connectTest connects an SSHClient to s with a fresh known_hosts file.
 func connectTest(t *testing.T, s *testSSHServer) *SSHClient {
 	t.Helper()
-	c, err := connectSSH("127.0.0.1", s.port(), "tester", s.clientKey, "", hostKeyPolicy{path: emptyKnownHosts(t)})
+	c, err := connectSSH(SSHOptions{Host: "127.0.0.1", Port: s.port(), User: "tester", KeyPath: s.clientKey, Passphrase: ""}, hostKeyPolicy{path: emptyKnownHosts(t)})
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}

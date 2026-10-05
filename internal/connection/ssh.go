@@ -37,61 +37,102 @@ const (
 // ErrSessionsBusy is returned when no SSH session slot frees up in time.
 var ErrSessionsBusy = errors.New("all SSH sessions are busy")
 
-// SSHClient runs commands on a remote server over one SSH connection. The
-// connection is (re)established lazily: if it drops — network change, laptop
-// sleep, server restart — it is detected and the next command dials again.
+// SSHClient runs commands on a remote server over one SSH connection,
+// optionally tunnelled through a jump host (bastion). The connection is
+// (re)established lazily: if it drops — network change, laptop sleep, server
+// or bastion restart — it is detected and the next command dials again (the
+// whole chain).
 type SSHClient struct {
 	base
 
-	addr   string
-	config *ssh.ClientConfig
-	agent  net.Conn // ssh-agent socket, nil when not used
-	sem    chan struct{}
+	addr       string
+	config     *ssh.ClientConfig
+	jumpAddr   string            // "" = direct connection
+	jumpConfig *ssh.ClientConfig // nil = direct connection
+	agents     []net.Conn        // ssh-agent sockets, closed with the client
+	sem        chan struct{}
 
-	mu     sync.Mutex
-	client *ssh.Client
-	closed bool
+	mu         sync.Mutex
+	client     *ssh.Client
+	jumpClient *ssh.Client // the bastion connection carrying client
+	closed     bool
 }
 
-// ConnectSSH connects to host:port with key auth (or ssh-agent when no key is
-// given) and verifies the host key against ~/.ssh/known_hosts: a changed key
-// is always rejected; an unknown host is recorded on first use, or refused
-// when strictHostKeys is set.
-func ConnectSSH(host string, port int, user, keyPath, passphrase string, strictHostKeys bool) (*SSHClient, error) {
+// SSHOptions describes how to reach a server.
+type SSHOptions struct {
+	Host       string
+	Port       int
+	User       string
+	KeyPath    string // "" = ssh-agent, then the default key files
+	Passphrase string
+	// StrictHostKeys refuses hosts that are not in known_hosts yet (instead
+	// of recording them on first use). Applies to the jump host too.
+	StrictHostKeys bool
+	// Jump, when set, is the bastion the connection is tunnelled through
+	// (like OpenSSH's ProxyJump).
+	Jump *JumpHost
+}
+
+// JumpHost is an SSH bastion.
+type JumpHost struct {
+	Host       string
+	Port       int
+	User       string
+	KeyPath    string // "" = ssh-agent, then the default key files
+	Passphrase string
+}
+
+// ConnectSSH connects to a server with key auth (or ssh-agent when no key is
+// given), through opts.Jump when set, and verifies every host key against
+// ~/.ssh/known_hosts: a changed key is always rejected; an unknown host is
+// recorded on first use, or refused when opts.StrictHostKeys is set.
+func ConnectSSH(opts SSHOptions) (*SSHClient, error) {
 	khPath, err := defaultKnownHostsPath()
 	if err != nil {
 		return nil, err
 	}
-	return connectSSH(host, port, user, keyPath, passphrase, hostKeyPolicy{path: khPath, strict: strictHostKeys})
+	return connectSSH(opts, hostKeyPolicy{path: khPath, strict: opts.StrictHostKeys})
 }
 
-func connectSSH(host string, port int, user, keyPath, passphrase string, policy hostKeyPolicy) (*SSHClient, error) {
-	auth, agentConn, err := buildAuthMethods(keyPath, passphrase)
-	if err != nil {
-		return nil, fmt.Errorf("building auth methods: %w", err)
+func connectSSH(opts SSHOptions, policy hostKeyPolicy) (*SSHClient, error) {
+	c := &SSHClient{
+		addr: net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port)),
+		sem:  make(chan struct{}, maxSessions),
 	}
+	c.base = base{sshTransport{c}}
+
 	hostKeyCallback, err := policy.callback()
 	if err != nil {
-		if agentConn != nil {
-			agentConn.Close()
-		}
 		return nil, err
 	}
-
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	c := &SSHClient{
-		addr: addr,
-		config: &ssh.ClientConfig{
+	clientConfig := func(addr, user, keyPath, passphrase string) (*ssh.ClientConfig, error) {
+		auth, agentConn, err := buildAuthMethods(keyPath, passphrase)
+		if err != nil {
+			return nil, fmt.Errorf("building auth methods: %w", err)
+		}
+		if agentConn != nil {
+			c.agents = append(c.agents, agentConn)
+		}
+		return &ssh.ClientConfig{
 			User:              user,
 			Auth:              auth,
 			HostKeyCallback:   hostKeyCallback,
 			HostKeyAlgorithms: policy.algorithms(addr),
 			Timeout:           dialTimeout,
-		},
-		agent: agentConn,
-		sem:   make(chan struct{}, maxSessions),
+		}, nil
 	}
-	c.base = base{sshTransport{c}}
+
+	if c.config, err = clientConfig(c.addr, opts.User, opts.KeyPath, opts.Passphrase); err != nil {
+		c.Close()
+		return nil, err
+	}
+	if j := opts.Jump; j != nil {
+		c.jumpAddr = net.JoinHostPort(j.Host, strconv.Itoa(j.Port))
+		if c.jumpConfig, err = clientConfig(c.jumpAddr, j.User, j.KeyPath, j.Passphrase); err != nil {
+			c.Close()
+			return nil, fmt.Errorf("jump host %s: %w", c.jumpAddr, err)
+		}
+	}
 
 	// Connect eagerly so configuration/auth errors surface immediately.
 	if _, err := c.conn(); err != nil {
@@ -101,7 +142,8 @@ func connectSSH(host string, port int, user, keyPath, passphrase string, policy 
 	return c, nil
 }
 
-// Close closes the connection. Further commands fail.
+// Close closes the connection (and the jump host connection). Further
+// commands fail.
 func (c *SSHClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -111,14 +153,19 @@ func (c *SSHClient) Close() error {
 		err = c.client.Close()
 		c.client = nil
 	}
-	if c.agent != nil {
-		c.agent.Close()
-		c.agent = nil
+	if c.jumpClient != nil {
+		c.jumpClient.Close()
+		c.jumpClient = nil
 	}
+	for _, a := range c.agents {
+		a.Close()
+	}
+	c.agents = nil
 	return err
 }
 
-// conn returns the live connection, dialing a new one if there is none.
+// conn returns the live connection, dialing a new one (through the jump host,
+// if any) if there is none.
 func (c *SSHClient) conn() (*ssh.Client, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -128,11 +175,28 @@ func (c *SSHClient) conn() (*ssh.Client, error) {
 	if c.client != nil {
 		return c.client, nil
 	}
-	cl, err := dial(c.addr, c.config)
+	if c.jumpConfig == nil {
+		cl, err := dial(c.addr, c.config)
+		if err != nil {
+			return nil, err
+		}
+		c.client = cl
+		go c.watch(cl)
+		return cl, nil
+	}
+
+	jc, err := dial(c.jumpAddr, c.jumpConfig)
 	if err != nil {
+		return nil, fmt.Errorf("jump host: %w", err)
+	}
+	cl, err := dialVia(jc, c.addr, c.config, dialTimeout)
+	if err != nil {
+		jc.Close()
 		return nil, err
 	}
-	c.client = cl
+	c.client, c.jumpClient = cl, jc
+	// A dead bastion takes the tunnelled connection down with it, so
+	// watching the target (whose keepalives cross the bastion) covers both.
 	go c.watch(cl)
 	return cl, nil
 }
@@ -156,6 +220,44 @@ func dial(addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
 	}
 	nc.SetDeadline(time.Time{}) //nolint:errcheck
 	return ssh.NewClient(sc, chans, reqs), nil
+}
+
+// dialVia opens a tunnel from the jump host jc to addr (a direct-tcpip
+// channel, as `ssh -J` does) and performs the SSH handshake with the target
+// over it. Tunnelled connections do not support deadlines, so the whole
+// exchange is bounded with a timer instead.
+func dialVia(jc *ssh.Client, addr string, config *ssh.ClientConfig, timeout time.Duration) (*ssh.Client, error) {
+	type result struct {
+		c   *ssh.Client
+		err error
+	}
+	res := make(chan result, 1)
+	go func() {
+		nc, err := jc.Dial("tcp", addr)
+		if err != nil {
+			res <- result{nil, fmt.Errorf("jump host could not reach %s: %w", addr, err)}
+			return
+		}
+		sc, chans, reqs, err := ssh.NewClientConn(nc, addr, config)
+		if err != nil {
+			nc.Close()
+			res <- result{nil, fmt.Errorf("ssh handshake with %s (via jump host): %w", addr, err)}
+			return
+		}
+		res <- result{ssh.NewClient(sc, chans, reqs), nil}
+	}()
+	select {
+	case r := <-res:
+		return r.c, r.err
+	case <-time.After(timeout):
+		go func() {
+			// Don't leak a connection that completes after we gave up.
+			if r := <-res; r.c != nil {
+				r.c.Close()
+			}
+		}()
+		return nil, fmt.Errorf("connecting to %s via the jump host: timed out after %s", addr, timeout)
+	}
 }
 
 // watch forgets cl once its transport dies and probes it periodically so a
@@ -198,12 +300,17 @@ func ping(cl *ssh.Client, timeout time.Duration) bool {
 	}
 }
 
-// forget drops cl if it is still the current connection.
+// forget drops cl (and the jump host connection carrying it) if it is still
+// the current connection.
 func (c *SSHClient) forget(cl *ssh.Client) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.client == cl {
 		c.client = nil
+		if c.jumpClient != nil {
+			c.jumpClient.Close()
+			c.jumpClient = nil
+		}
 	}
 }
 

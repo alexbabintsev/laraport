@@ -120,6 +120,7 @@ servers:
     user: "root"
     key: "~/.ssh/id_ed25519"
     type: ssh
+    jump_host: "ops@bastion.example.com:2222"  # optional: connect through an SSH bastion
     docker_cmd: "sudo -n docker"     # optional: user not in the docker group (or "podman")
     root_path: "/var/www/html"       # optional: default app root for this server's containers
     containers:
@@ -163,6 +164,8 @@ servers:
 | `type` | `ssh` \| `local` | Remote server over SSH, or this machine's Docker |
 | `host`, `port`, `user` | | SSH connection (`port` defaults to 22) |
 | `key` | path | Private key; empty = ssh-agent / default keys |
+| `jump_host` | `[user@]host[:port]` | SSH bastion to connect through, like OpenSSH's `ProxyJump` / `ssh -J` (one hop). User defaults to the server's `user`, port to 22 |
+| `jump_key` | path | Key for the bastion; empty = the server's `key`, then ssh-agent / default keys |
 | `docker_cmd` | string | How to invoke Docker on that host, e.g. `sudo -n docker` when your user is not in the `docker` group (needs passwordless sudo for docker), `docker --context prod`, or `podman`. Every `docker` call laradok makes there — including Terminal and Docker Logs — goes through it. Default: `docker` |
 | `root_path` | path | Default app root for containers on this server that do not set their own `root_path` |
 
@@ -192,6 +195,15 @@ Server host keys are checked against `~/.ssh/known_hosts` (the same file OpenSSH
 
 - a server you have never connected to is trusted on first use and its key is recorded;
 - a server whose key **differs** from the recorded one is refused with a "host key mismatch" error — that is what a man-in-the-middle attack looks like. If the server was legitimately reinstalled, remove the old entry with `ssh-keygen -R <host>` (or `ssh-keygen -R '[host]:port'`).
+
+### Jump host (bastion)
+
+For servers that are only reachable through a bastion, set `jump_host` (in the server form or the config). laradok connects to the bastion, opens a tunnel from it to the server (a `direct-tcpip` channel, exactly what `ssh -J` does) and runs the SSH session to the server through that tunnel:
+
+- both host keys are verified against `~/.ssh/known_hosts`, each under its own name, with the same `accept-new` / `strict` policy;
+- if the bastion or the tunnel drops, the whole chain is re-established on the next action;
+- the bastion must allow TCP forwarding (`AllowTcpForwarding yes`, the OpenSSH default);
+- **Terminal** uses your system `ssh` with `-J` (or, when a key is configured for the bastion, an equivalent `ProxyCommand` with `-i`), so it follows the same route.
 
 ### Connection drops
 

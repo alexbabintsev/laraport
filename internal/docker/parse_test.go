@@ -419,6 +419,19 @@ func TestInteractiveShellCmd(t *testing.T) {
 	if localSudo.Args[0] != "sh" || !strings.Contains(localSudo.Args[2], "docker() { podman \"$@\"; }; docker exec -it 'abc'") {
 		t.Errorf("custom CLI not applied locally: %q", localSudo.Args)
 	}
+	viaJ := InteractiveShellCmd(ShellTarget{ContainerID: "a", Host: "h", User: "u", JumpUser: "ops", JumpHost: "bastion", JumpPort: 2222})
+	if a := strings.Join(viaJ.Args, " "); !strings.Contains(a, "-J ops@bastion:2222 -- u@h") {
+		t.Errorf("-J args %q", a)
+	}
+	viaV6 := InteractiveShellCmd(ShellTarget{ContainerID: "a", Host: "h", JumpHost: "2001:db8::1"})
+	if a := strings.Join(viaV6.Args, " "); !strings.Contains(a, "-J [2001:db8::1] -- h") {
+		t.Errorf("IPv6 -J args %q", a)
+	}
+	viaKey := InteractiveShellCmd(ShellTarget{ContainerID: "a", Host: "h", JumpUser: "ops", JumpHost: "bastion", JumpPort: 2222, JumpKey: "/keys/my key"})
+	if a := strings.Join(viaKey.Args, " "); !strings.Contains(a, "-o ProxyCommand=ssh -i '/keys/my key' -W %h:%p -p 2222 -l 'ops' -- 'bastion' -- h") ||
+		strings.Contains(a, "-J") {
+		t.Errorf("ProxyCommand args %q", a)
+	}
 	if def := InteractiveShellCmd(ShellTarget{ContainerID: "a", Host: "h", Port: 22}); strings.Contains(strings.Join(def.Args, " "), "-p") {
 		t.Errorf("default port passed: %q", def.Args)
 	}

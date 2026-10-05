@@ -29,12 +29,14 @@ func (s Server) Validate() error {
 		} else if strings.ContainsAny(s.User, " \t\n@") || strings.HasPrefix(s.User, "-") {
 			errs = append(errs, "user must not contain spaces or '@'")
 		}
-		if s.Key != "" {
-			if st, err := os.Stat(expandHome(s.Key)); err != nil {
-				errs = append(errs, fmt.Sprintf("key file %s not found", s.Key))
-			} else if st.IsDir() {
-				errs = append(errs, fmt.Sprintf("key %s is a directory", s.Key))
+		errs = append(errs, checkKeyFile("key", s.Key)...)
+		if strings.TrimSpace(s.JumpHost) != "" {
+			if _, err := ParseJumpHost(s.JumpHost); err != nil {
+				errs = append(errs, err.Error())
 			}
+			errs = append(errs, checkKeyFile("jump key", s.JumpKey)...)
+		} else if s.JumpKey != "" {
+			errs = append(errs, "jump key is set but there is no jump host")
 		}
 	default:
 		errs = append(errs, "type must be ssh or local")
@@ -51,12 +53,29 @@ func (s Server) Validate() error {
 	return nil
 }
 
+// checkKeyFile validates an optional key path.
+func checkKeyFile(what, path string) []string {
+	if path == "" {
+		return nil
+	}
+	st, err := os.Stat(expandHome(path))
+	switch {
+	case err != nil:
+		return []string{fmt.Sprintf("%s file %s not found", what, path)}
+	case st.IsDir():
+		return []string{fmt.Sprintf("%s %s is a directory", what, path)}
+	}
+	return nil
+}
+
 // normalize trims fields and fills defaults before a server is stored.
 func (s Server) normalize() Server {
 	s.Name = strings.TrimSpace(s.Name)
 	s.Host = strings.TrimSpace(s.Host)
 	s.User = strings.TrimSpace(s.User)
 	s.Key = expandHome(strings.TrimSpace(s.Key))
+	s.JumpHost = strings.TrimSpace(s.JumpHost)
+	s.JumpKey = expandHome(strings.TrimSpace(s.JumpKey))
 	s.DockerCmd = strings.TrimSpace(s.DockerCmd)
 	s.RootPath = strings.TrimSpace(s.RootPath)
 	if s.Type == "" {
@@ -65,6 +84,7 @@ func (s Server) normalize() Server {
 	if s.Type == ServerTypeLocal {
 		// Connection fields mean nothing for the local socket.
 		s.Host, s.Port, s.User, s.Key, s.Passphrase = "", 0, "", "", ""
+		s.JumpHost, s.JumpKey = "", ""
 	}
 	if s.Type == ServerTypeSSH && s.Port == 0 {
 		s.Port = 22

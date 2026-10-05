@@ -303,3 +303,39 @@ func TestStatsIntervalAndWrapSetters(t *testing.T) {
 		t.Fatal("SetShowStopped")
 	}
 }
+
+func TestServerEditJumpFields(t *testing.T) {
+	s := NewServerEditScreen("", config.Server{}, w, 80)
+	var m tea.Model = s
+	if strings.Contains(m.View(), "Jump key") {
+		t.Fatal("jump key shown without a jump host")
+	}
+	m = typeText(m, "prod")
+	m = focusField(t, m, &s.form, "host")
+	m = typeText(m, "10.0.0.5")
+	m = focusField(t, m, &s.form, "user")
+	m = typeText(m, "deploy")
+	m = focusField(t, m, &s.form, "jump_host")
+	m = typeText(m, "ops@bastion:2222")
+	if !strings.Contains(m.View(), "Jump key") {
+		t.Fatal("jump key hidden although a jump host is set")
+	}
+	_, cmd := m.Update(key("ctrl+s"))
+	got := first[msgs.SaveServerMsg](t, cmd).Server
+	if got.JumpHost != "ops@bastion:2222" || got.JumpKey != "" {
+		t.Fatalf("saved %+v", got)
+	}
+	// Invalid jump host is reported by the form.
+	s.form.field("jump_host").input.SetValue("a,b")
+	m.Update(key("ctrl+s"))
+	if !strings.Contains(m.View(), "only one jump host") {
+		t.Fatal("jump host error not shown")
+	}
+}
+
+func TestServerListShowsJumpHost(t *testing.T) {
+	m := NewServerListScreen([]config.Server{{Name: "p", Type: config.ServerTypeSSH, Host: "h", Port: 22, User: "u", JumpHost: "ops@bastion"}}, w, 40)
+	if !strings.Contains(m.View(), "via ops@bastion") {
+		t.Fatal("jump host not shown")
+	}
+}

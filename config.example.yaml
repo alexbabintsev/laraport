@@ -171,6 +171,8 @@ servers:
     user: "deploy"
     key: "~/.ssh/id_ed25519"
     type: ssh
+    # jump_host: "ops@bastion.example.com:2222"  # connect through an SSH bastion (like ssh -J)
+    # jump_key: "~/.ssh/bastion"    # key for the bastion (default: the key above, then ssh-agent)
     # docker_cmd: "sudo -n docker"  # if your user is not in the docker group (or "podman")
     # root_path: "/var/www/html"    # default app root for this server's containers
     containers:

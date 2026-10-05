@@ -25,6 +25,8 @@ type Server struct {
 	Key        string            `yaml:"key,omitempty"`
 	Passphrase string            `yaml:"passphrase,omitempty"`
 	Type       ServerType        `yaml:"type"`
+	JumpHost   string            `yaml:"jump_host,omitempty"`  // SSH bastion, [user@]host[:port] (like ProxyJump)
+	JumpKey    string            `yaml:"jump_key,omitempty"`   // key for the bastion (default: the server's key, then ssh-agent)
 	DockerCmd  string            `yaml:"docker_cmd,omitempty"` // docker CLI invocation, e.g. "sudo -n docker" or "podman" (default "docker")
 	RootPath   string            `yaml:"root_path,omitempty"`  // default app root for this server's containers
 	Containers []ContainerConfig `yaml:"containers,omitempty"`
@@ -104,6 +106,7 @@ func Load(path string) (*Config, error) {
 
 	for i := range cfg.Servers {
 		cfg.Servers[i].Key = expandHome(cfg.Servers[i].Key)
+		cfg.Servers[i].JumpKey = expandHome(cfg.Servers[i].JumpKey)
 		if cfg.Servers[i].Type == ServerTypeSSH && cfg.Servers[i].Port == 0 {
 			cfg.Servers[i].Port = 22
 		}
@@ -161,8 +164,10 @@ func (c *Config) Save(path string) error {
 		if s.implicit {
 			continue
 		}
-		if home != "" && strings.HasPrefix(s.Key, home+string(filepath.Separator)) {
-			s.Key = "~" + strings.TrimPrefix(s.Key, home)
+		for _, k := range []*string{&s.Key, &s.JumpKey} {
+			if home != "" && strings.HasPrefix(*k, home+string(filepath.Separator)) {
+				*k = "~" + strings.TrimPrefix(*k, home)
+			}
 		}
 		out.Servers = append(out.Servers, s)
 	}

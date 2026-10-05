@@ -153,7 +153,7 @@ func TestConnectSSHViaAgentAndDefaultKnownHosts(t *testing.T) {
 	}()
 	t.Setenv("SSH_AUTH_SOCK", sock)
 
-	c, err := ConnectSSH("127.0.0.1", s.port(), "tester", "", "", false)
+	c, err := ConnectSSH(SSHOptions{Host: "127.0.0.1", Port: s.port(), User: "tester", KeyPath: "", Passphrase: "", StrictHostKeys: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestConnectSSHViaAgentAndDefaultKnownHosts(t *testing.T) {
 func TestConnectSSHAuthFailure(t *testing.T) {
 	s := newTestSSHServer(t)
 	other, _ := writeKey(t, t.TempDir(), "other", "")
-	_, err := connectSSH("127.0.0.1", s.port(), "tester", other, "", hostKeyPolicy{path: emptyKnownHosts(t)})
+	_, err := connectSSH(SSHOptions{Host: "127.0.0.1", Port: s.port(), User: "tester", KeyPath: other, Passphrase: ""}, hostKeyPolicy{path: emptyKnownHosts(t)})
 	if err == nil || !strings.Contains(err.Error(), "handshake") {
 		t.Fatalf("err = %v", err)
 	}
@@ -185,7 +185,7 @@ func TestConnectSSHDialFailure(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close() // nothing listens there now
 	k, _ := writeKey(t, t.TempDir(), "k", "")
-	_, err := connectSSH("127.0.0.1", port, "u", k, "", hostKeyPolicy{path: emptyKnownHosts(t)})
+	_, err := connectSSH(SSHOptions{Host: "127.0.0.1", Port: port, User: "u", KeyPath: k, Passphrase: ""}, hostKeyPolicy{path: emptyKnownHosts(t)})
 	if err == nil || !strings.Contains(err.Error(), "ssh dial") {
 		t.Fatalf("err = %v", err)
 	}
@@ -225,7 +225,7 @@ func TestHostKeyAlgorithmsFollowKnownHosts(t *testing.T) {
 	if algos := p.algorithms(addr); algos != nil {
 		t.Fatalf("unknown host algos = %v", algos)
 	}
-	c, err := connectSSH("127.0.0.1", s.port(), "tester", s.clientKey, "", p)
+	c, err := connectSSH(SSHOptions{Host: "127.0.0.1", Port: s.port(), User: "tester", KeyPath: s.clientKey, Passphrase: ""}, p)
 	if err != nil {
 		t.Fatal(err)
 	}

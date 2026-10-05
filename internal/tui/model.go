@@ -204,6 +204,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			target.Port = a.activeServer.Port
 			target.User = a.activeServer.User
 			target.KeyPath = a.activeServer.Key // already ~-expanded at config load
+			if j, key, _, ok, err := a.activeServer.ResolvedJump(); err == nil && ok {
+				target.JumpUser, target.JumpHost, target.JumpPort, target.JumpKey = j.User, j.Host, j.Port, key
+			}
 		}
 		cmd := docker.InteractiveShellCmd(target)
 		// Suspend the TUI, attach the real terminal to the shell, resume on exit.
@@ -666,7 +669,18 @@ func connectServerCmd(s config.Server, attempt uint64, strictHostKeys bool) tea.
 // server's docker command.
 func connectServer(s config.Server, strictHostKeys bool) (docker.Runner, error) {
 	if s.Type == config.ServerTypeSSH {
-		c, err := connection.ConnectSSH(s.Host, s.Port, s.User, s.Key, s.Passphrase, strictHostKeys)
+		opts := connection.SSHOptions{
+			Host: s.Host, Port: s.Port, User: s.User, KeyPath: s.Key, Passphrase: s.Passphrase,
+			StrictHostKeys: strictHostKeys,
+		}
+		j, key, pass, hasJump, err := s.ResolvedJump()
+		if err != nil {
+			return nil, err
+		}
+		if hasJump {
+			opts.Jump = &connection.JumpHost{Host: j.Host, Port: j.Port, User: j.User, KeyPath: key, Passphrase: pass}
+		}
+		c, err := connection.ConnectSSH(opts)
 		if err != nil {
 			return nil, err
 		}

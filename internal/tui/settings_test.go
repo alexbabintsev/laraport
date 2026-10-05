@@ -187,3 +187,10 @@ func TestTestConnectionLocal(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestConnectServerInvalidJumpHost(t *testing.T) {
+	_, err := connectServer(config.Server{Name: "p", Type: config.ServerTypeSSH, Host: "127.0.0.1", Port: 22, User: "u", JumpHost: "a,b"}, false)
+	if err == nil || !strings.Contains(err.Error(), "only one jump host") {
+		t.Fatalf("err = %v", err)
+	}
+}

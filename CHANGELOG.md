@@ -7,6 +7,7 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Jump host (bastion) support** — `jump_host: "[user@]host[:port]"` (and optional `jump_key`) on a server, also editable in the server form. laradok connects to the bastion, tunnels to the server over a `direct-tcpip` channel (like `ssh -J`) and verifies both host keys with the configured policy; a dropped bastion or tunnel is re-established on the next action. Terminal goes through the bastion too (`ssh -J`, or a `ProxyCommand` with `-i` when a bastion key is set). The server list shows "via <bastion>"
 - **Server management in the UI** — on the server list: `a` add, `e` edit, `d` delete (with confirmation, naming the container settings removed with it). The form validates input (unique name, host/user for SSH, port range, key file exists) and `ctrl+t` tests the connection (`docker version`). Adding a server keeps the implicit Local server in the config; deleting the last server brings it back
 - **Per-server `docker_cmd`** — e.g. `sudo -n docker` for users outside the `docker` group, `docker --context …` or `podman`. Applied to every Docker call on that server, including Terminal and Docker Logs, via a shell function in front of each host command, so data inside containers or quoted arguments is never rewritten
 - **Per-server `root_path`** — default app root for containers without their own

@@ -33,7 +33,8 @@ jobs:
 
   integration:
     # Real containers: busybox, dash and bash shells, Postgres, MariaDB,
-    # Redis and MongoDB with hostile file names and passwords.
+    # Redis and MongoDB with hostile file names and passwords; real OpenSSH
+    # servers for the jump host (bastion) path.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +52,7 @@ jobs:
       - name: Integration tests
         env:
           LARADOK_INTEGRATION: "1"
-        run: go test -race -count=1 ./internal/docker/
+        run: go test -race -count=1 ./internal/docker/ ./internal/connection/
 
   vulncheck:
     runs-on: ubuntu-latest

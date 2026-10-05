@@ -51,6 +51,10 @@ func NewServerEditScreen(original string, srv config.Server, width, height int) 
 	s.form.text("user", "User", srv.User, "deploy", "").visible = sshOnly
 	s.form.text("key", "Key", collapseHome(srv.Key), "~/.ssh/id_ed25519 (empty = ssh-agent / default keys)",
 		"passphrase-protected keys: load them into ssh-agent").visible = sshOnly
+	s.form.text("jump_host", "Jump host", srv.JumpHost, "user@bastion.example.com:22 (empty = direct)",
+		"SSH bastion to connect through, like ssh -J; user defaults to the server's user").visible = sshOnly
+	s.form.text("jump_key", "Jump key", collapseHome(srv.JumpKey), "same as Key (then ssh-agent / default keys)",
+		"key for the bastion, if it differs").visible = func(f *form) bool { return sshOnly(f) && f.str("jump_host") != "" }
 	s.form.text("docker_cmd", "Docker command", srv.DockerCmd, "docker",
 		`e.g. "sudo -n docker" if your user is not in the docker group, or "podman"`)
 	s.form.text("root_path", "Default root path", srv.RootPath, "auto (/var/www/html or /app)",
@@ -79,6 +83,10 @@ func (s *ServerEditScreen) server() (config.Server, bool) {
 		srv.Host = s.form.str("host")
 		srv.User = s.form.str("user")
 		srv.Key = s.form.str("key")
+		srv.JumpHost = s.form.str("jump_host")
+		if srv.JumpHost != "" {
+			srv.JumpKey = s.form.str("jump_key")
+		}
 		if p := s.form.str("port"); p != "" {
 			n, err := strconv.Atoi(p)
 			if err != nil {

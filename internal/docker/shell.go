@@ -3,6 +3,7 @@ package docker
 import (
 	"os/exec"
 	"strconv"
+	"strings"
 )
 
 // ShellTarget carries everything needed to open an interactive shell in a
@@ -19,6 +20,29 @@ type ShellTarget struct {
 	Port    int
 	User    string
 	KeyPath string
+
+	// Jump host (bastion); JumpHost "" = direct. JumpKey "" = ssh's own
+	// defaults and agent.
+	JumpUser string
+	JumpHost string
+	JumpPort int
+	JumpKey  string
+}
+
+// jumpSpec renders the jump host for `ssh -J`: [user@]host[:port], with
+// IPv6 addresses in brackets.
+func (t ShellTarget) jumpSpec() string {
+	host := t.JumpHost
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if t.JumpUser != "" {
+		host = t.JumpUser + "@" + host
+	}
+	if t.JumpPort != 0 && t.JumpPort != 22 {
+		host += ":" + strconv.Itoa(t.JumpPort)
+	}
+	return host
 }
 
 // innerShellCmd is the command run inside the container: clear the screen so no
@@ -49,6 +73,23 @@ func InteractiveShellCmd(t ShellTarget) *exec.Cmd {
 	}
 	if t.KeyPath != "" {
 		args = append(args, "-i", t.KeyPath)
+	}
+	switch {
+	case t.JumpHost != "" && t.JumpKey == "":
+		args = append(args, "-J", t.jumpSpec())
+	case t.JumpHost != "":
+		// ssh -J cannot take a key for the jump hop: tunnel with an explicit
+		// ProxyCommand instead (run by ssh through the user's shell, hence
+		// the quoting; %h/%p are filled in by ssh).
+		proxy := "ssh -i " + shellQuote(t.JumpKey) + " -W %h:%p"
+		if t.JumpPort != 0 && t.JumpPort != 22 {
+			proxy += " -p " + strconv.Itoa(t.JumpPort)
+		}
+		if t.JumpUser != "" {
+			proxy += " -l " + shellQuote(t.JumpUser)
+		}
+		proxy += " -- " + shellQuote(t.JumpHost)
+		args = append(args, "-o", "ProxyCommand="+proxy)
 	}
 	dest := t.Host
 	if t.User != "" {
