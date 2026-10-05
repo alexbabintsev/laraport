@@ -54,14 +54,15 @@ type SSHClient struct {
 }
 
 // ConnectSSH connects to host:port with key auth (or ssh-agent when no key is
-// given) and verifies the host key against ~/.ssh/known_hosts (new hosts are
-// recorded on first use; a changed key is rejected).
-func ConnectSSH(host string, port int, user, keyPath, passphrase string) (*SSHClient, error) {
+// given) and verifies the host key against ~/.ssh/known_hosts: a changed key
+// is always rejected; an unknown host is recorded on first use, or refused
+// when strictHostKeys is set.
+func ConnectSSH(host string, port int, user, keyPath, passphrase string, strictHostKeys bool) (*SSHClient, error) {
 	khPath, err := defaultKnownHostsPath()
 	if err != nil {
 		return nil, err
 	}
-	return connectSSH(host, port, user, keyPath, passphrase, hostKeyPolicy{path: khPath})
+	return connectSSH(host, port, user, keyPath, passphrase, hostKeyPolicy{path: khPath, strict: strictHostKeys})
 }
 
 func connectSSH(host string, port int, user, keyPath, passphrase string, policy hostKeyPolicy) (*SSHClient, error) {

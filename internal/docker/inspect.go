@@ -131,3 +131,16 @@ func humanState(ri rawInspect) string {
 	}
 	return fmt.Sprintf("%s (exit %d)", strings.Title(ri.State.Status), ri.State.ExitCode) //nolint:staticcheck
 }
+
+// ServerVersion returns the Docker server version (used to test a
+// connection and the docker command).
+func ServerVersion(r Runner) (string, error) {
+	out, err := runOutput(r, "docker version --format "+shellQuote("{{.Server.Version}}"))
+	if err != nil {
+		return "", fmt.Errorf("docker version: %w", err)
+	}
+	if out == "" {
+		return "", fmt.Errorf("docker version: no server version reported")
+	}
+	return out, nil
+}

@@ -200,3 +200,10 @@ func (s *OutputScreen) View() string {
 	content := lipgloss.JoinVertical(lipgloss.Left, header, "", vpView)
 	return styles.PinToBottom(s.height, content, status)
 }
+
+// SetWrap sets whether long lines are wrapped (the default comes from the
+// settings; f2 toggles it).
+func (s *OutputScreen) SetWrap(on bool) {
+	s.wrap = on
+	s.setContent()
+}

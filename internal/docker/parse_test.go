@@ -408,8 +408,16 @@ func TestInteractiveShellCmd(t *testing.T) {
 	}
 	remote := InteractiveShellCmd(ShellTarget{ContainerID: "abc", Host: "-oProxyCommand=x", Port: 2222, User: "deploy", KeyPath: "/k"})
 	args := strings.Join(remote.Args, " ")
-	if !strings.HasPrefix(args, "ssh -t -p 2222 -i /k -- deploy@-oProxyCommand=x docker exec -it 'abc' sh -c ") {
+	if !strings.HasPrefix(args, "ssh -t -p 2222 -i /k -- deploy@-oProxyCommand=x sh -c 'docker exec -it '\\''abc'\\'' sh -c ") {
 		t.Errorf("remote args %q", args)
+	}
+	sudo := InteractiveShellCmd(ShellTarget{ContainerID: "abc", Host: "h", DockerCLI: "sudo docker"})
+	if a := strings.Join(sudo.Args, " "); !strings.Contains(a, "docker() { sudo docker") {
+		t.Errorf("custom CLI not applied over ssh: %q", a)
+	}
+	localSudo := InteractiveShellCmd(ShellTarget{ContainerID: "abc", DockerCLI: "podman"})
+	if localSudo.Args[0] != "sh" || !strings.Contains(localSudo.Args[2], "docker() { podman \"$@\"; }; docker exec -it 'abc'") {
+		t.Errorf("custom CLI not applied locally: %q", localSudo.Args)
 	}
 	if def := InteractiveShellCmd(ShellTarget{ContainerID: "a", Host: "h", Port: 22}); strings.Contains(strings.Join(def.Args, " "), "-p") {
 		t.Errorf("default port passed: %q", def.Args)

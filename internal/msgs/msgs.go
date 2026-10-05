@@ -3,6 +3,7 @@ package msgs
 import (
 	"github.com/alexbabintsev/laradok/internal/config"
 	"github.com/alexbabintsev/laradok/internal/docker"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // --- Navigation messages ---
@@ -82,13 +83,81 @@ type PushGlobalCmdMsg struct{}
 type PushConfirmMsg struct {
 	Title  string
 	Detail string        // the exact command or consequence shown to the user
-	Run    PushOutputMsg // dispatched when the user confirms
+	Run    PushOutputMsg // dispatched when the user confirms (a command to run)
+	Then   tea.Msg       // dispatched instead of Run when set (any other action)
 }
 
 // ConfirmedMsg is emitted by the confirmation screen when the user accepts.
-// The App pops the confirm screen and dispatches Run.
+// The App pops the confirm screen and dispatches Then if set, otherwise Run.
 type ConfirmedMsg struct {
-	Run PushOutputMsg
+	Run  PushOutputMsg
+	Then tea.Msg
+}
+
+// --- Server management ---
+
+// PushServerEditMsg opens the server form; Original is "" for a new server.
+type PushServerEditMsg struct {
+	Original string
+	Server   config.Server
+}
+
+// SaveServerMsg asks the App to store a server (add when Original is "").
+type SaveServerMsg struct {
+	Original string
+	Server   config.Server
+}
+
+// ServerSavedMsg reports the result of SaveServerMsg to the form.
+type ServerSavedMsg struct {
+	Err error
+}
+
+// DeleteServerMsg removes a server from the config (sent after confirmation).
+type DeleteServerMsg struct {
+	Name string
+}
+
+// ServerListChangedMsg carries the updated server list (and a status line)
+// after a server was added, edited or deleted.
+type ServerListChangedMsg struct {
+	Servers []config.Server
+	Status  string
+	Err     error
+}
+
+// TestConnectionMsg asks the App to try connecting to a server.
+type TestConnectionMsg struct {
+	Server config.Server
+}
+
+// ConnectionTestedMsg reports the result of TestConnectionMsg.
+type ConnectionTestedMsg struct {
+	Result string // e.g. "Docker 27.1.1"
+	Err    error
+}
+
+// --- Settings ---
+
+// PushSettingsMsg opens the settings screen.
+type PushSettingsMsg struct{}
+
+// SaveSettingsMsg asks the App to store new settings.
+type SaveSettingsMsg struct {
+	Settings config.Settings
+}
+
+// SettingsSavedMsg reports the result of SaveSettingsMsg.
+type SettingsSavedMsg struct {
+	Err error
+}
+
+// ClearSQLHistoryMsg deletes the persisted SQL history.
+type ClearSQLHistoryMsg struct{}
+
+// SQLHistoryClearedMsg reports the result of ClearSQLHistoryMsg.
+type SQLHistoryClearedMsg struct {
+	Err error
 }
 
 // PushRedisCmdMsg navigates to the Redis commands screen.

@@ -418,3 +418,49 @@ func gunzipString(t *testing.T, path string) string {
 	}
 	return string(out)
 }
+
+// TestIntegrationCustomDockerCLI runs real operations through a wrapper CLI
+// ("env … docker", standing in for "sudo -n docker").
+func TestIntegrationCustomDockerCLI(t *testing.T) {
+	requireIntegration(t)
+	r := WithDockerCLI(connection.NewLocalClient(), "env LARADOK_VIA_WRAPPER=1 docker")
+	id := startContainer(t, "alpine:3.20", "--", "sh", "-c", "echo hello-from-logs; exec sleep 3600")
+
+	if v, err := ServerVersion(r); err != nil || v == "" {
+		t.Fatalf("version: %q %v", v, err)
+	}
+	cs, err := ListContainers(r, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range cs {
+		if strings.HasPrefix(id, c.ID) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("container not listed through the wrapper")
+	}
+	ch, stop, err := ExecCustomCommand(r, id, "", "echo in-container")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := <-ch; l != "in-container" {
+		t.Fatalf("exec: %q", l)
+	}
+	stop()
+	ch, stop, err = TailDockerLogs(r, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	select {
+	case l := <-ch:
+		if l != "hello-from-logs" {
+			t.Fatalf("logs: %q", l)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("docker logs through the wrapper produced nothing")
+	}
+}

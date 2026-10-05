@@ -104,6 +104,7 @@ type ContainerListScreen struct {
 	spinner          spinner.Model
 	loading          bool
 	connecting       bool // true while SSH handshake is in progress
+	showStopped      bool // include stopped containers (docker ps -a)
 	err              error
 	width            int
 	height           int
@@ -131,6 +132,7 @@ func NewContainerListScreen(server config.Server, runner docker.Runner, width, h
 
 	connecting := runner == nil
 	return &ContainerListScreen{
+		showStopped:      true,
 		server:           server,
 		runner:           runner,
 		containerConfigs: server.Containers,
@@ -159,10 +161,13 @@ func (s *ContainerListScreen) Init() tea.Cmd {
 	return tea.Batch(s.spinner.Tick, s.loadContainers())
 }
 
+// SetShowStopped selects whether stopped containers are listed.
+func (s *ContainerListScreen) SetShowStopped(show bool) { s.showStopped = show }
+
 func (s *ContainerListScreen) loadContainers() tea.Cmd {
-	runner := s.runner
+	runner, all := s.runner, s.showStopped
 	return func() tea.Msg {
-		containers, err := docker.ListContainers(runner)
+		containers, err := docker.ListContainers(runner, all)
 		return msgs.ContainersLoadedMsg{Containers: containers, Err: err}
 	}
 }

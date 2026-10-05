@@ -19,6 +19,8 @@ import (
 //     $FAKE_DIR/inspect.json, ps.out, stats.out;
 //   - anything else fails.
 const fakeDockerScript = `#!/bin/sh
+# Skip global flags such as --log-level (value-less in tests).
+while [ "${1#--}" != "$1" ]; do shift; done
 cmd=$1; shift
 case "$cmd" in
 exec)

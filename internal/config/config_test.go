@@ -143,10 +143,14 @@ servers:
 	if !ok || cc.DisplayName != "Web" || !cc.Favorite || again.Commands[0].Commands[0].Cmd != "php artisan cache:clear" {
 		t.Fatalf("round trip lost data: %+v", again)
 	}
-	// No temp files left next to the config.
+	// Only the config and its one-time backup; no temp files left behind.
 	entries, _ := os.ReadDir(filepath.Dir(p))
-	if len(entries) != 1 {
-		t.Errorf("dir entries: %d", len(entries))
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if strings.Join(names, ",") != "config.yaml,config.yaml.bak" {
+		t.Errorf("dir entries: %q", names)
 	}
 }
 
@@ -235,11 +239,11 @@ func TestSQLHistory(t *testing.T) {
 	for i := range long {
 		long[i] = fmt.Sprintf("q%d", i)
 	}
-	if err := SaveSQLHistory("s/c/db", long); err != nil {
+	if err := SaveSQLHistory("s/c/db", long, DefaultSQLHistorySize); err != nil {
 		t.Fatal(err)
 	}
 	h := LoadSQLHistory("s/c/db")
-	if len(h) != maxPersistedSQLHistory || h[0] != "q50" || h[len(h)-1] != "q249" {
+	if len(h) != DefaultSQLHistorySize || h[0] != "q50" || h[len(h)-1] != "q249" {
 		t.Fatalf("history trimmed wrong: %d %q…%q", len(h), h[0], h[len(h)-1])
 	}
 	st, _ := os.Stat(p)
@@ -260,7 +264,7 @@ func TestSQLHistoryConcurrentSaves(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			SaveSQLHistory(fmt.Sprintf("key%d", i), []string{"q"}) //nolint:errcheck
+			SaveSQLHistory(fmt.Sprintf("key%d", i), []string{"q"}, 10) //nolint:errcheck
 		}(i)
 	}
 	wg.Wait()

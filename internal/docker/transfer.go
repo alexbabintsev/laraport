@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,9 +24,18 @@ const StatusLinePrefix = "\x00status\x00"
 // progressInterval throttles "received N MB" status updates.
 const progressInterval = 500 * time.Millisecond
 
+// downloadsDir is the configured downloads directory ("" = ~/Downloads).
+var downloadsDir atomic.Pointer[string]
+
+// SetDownloadsDir sets where dumps and archives are saved ("" = ~/Downloads).
+func SetDownloadsDir(dir string) { downloadsDir.Store(&dir) }
+
 // downloadsDirFunc returns the directory downloads are saved to. Tests
 // override it.
 var downloadsDirFunc = func() (string, error) {
+	if p := downloadsDir.Load(); p != nil && *p != "" {
+		return *p, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("locating home directory: %w", err)

@@ -7,8 +7,6 @@ import (
 	"sync"
 )
 
-const maxPersistedSQLHistory = 200
-
 // sqlHistoryMu serialises the read-modify-write in SaveSQLHistory.
 var sqlHistoryMu sync.Mutex
 
@@ -44,13 +42,17 @@ func LoadSQLHistory(key string) []string {
 	return all[key]
 }
 
-// SaveSQLHistory persists an updated query list for a specific DB key.
-func SaveSQLHistory(key string, history []string) error {
+// SaveSQLHistory persists an updated query list for a specific DB key,
+// keeping the last limit entries (limit <= 0 stores nothing).
+func SaveSQLHistory(key string, history []string, limit int) error {
+	if limit <= 0 {
+		return nil
+	}
 	sqlHistoryMu.Lock()
 	defer sqlHistoryMu.Unlock()
 	all := loadAllSQLHistory()
-	if len(history) > maxPersistedSQLHistory {
-		history = history[len(history)-maxPersistedSQLHistory:]
+	if len(history) > limit {
+		history = history[len(history)-limit:]
 	}
 	all[key] = history
 	data, err := json.Marshal(all)
@@ -58,4 +60,14 @@ func SaveSQLHistory(key string, history []string) error {
 		return err
 	}
 	return writeFileAtomic(sqlHistoryPathFunc(), data)
+}
+
+// ClearSQLHistory deletes the persisted SQL history for every database.
+func ClearSQLHistory() error {
+	sqlHistoryMu.Lock()
+	defer sqlHistoryMu.Unlock()
+	if err := os.Remove(sqlHistoryPathFunc()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

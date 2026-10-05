@@ -70,9 +70,33 @@ LARADOK_CONFIG=/path/to/config.yaml laradok
 # No config needed — laradok auto-adds a local server if none are defined.
 ```
 
+### Managing servers and settings from the UI
+
+Servers can be managed on the server list without editing YAML:
+
+| Key | Action |
+|---|---|
+| `a` | Add a server |
+| `e` | Edit the selected server |
+| `d` | Delete the selected server (asks for confirmation; its container settings go with it) |
+| `s` | Settings |
+
+The server form has `ctrl+t` to **test the connection** (connects and runs `docker version`) and `ctrl+s` to save. Without a config only the implicit **Local** server is shown; once you add a server, Local is written to the config too, so it stays (delete it if you don't want it). Deleting the last server brings the implicit Local back.
+
+Saving rewrites `config.yaml` (comments and formatting are not kept), so the **first** time laradok writes it, the original is kept as `config.yaml.bak`. The file is written atomically with mode `0600`. SSH key passphrases are not editable in the UI — load such keys into `ssh-agent` instead (an existing `passphrase:` in the file is preserved).
+
 ### Full config example
 
 ```yaml
+settings:                       # all optional; shown with their defaults where useful
+  downloads_dir: "~/Downloads"  # where dumps and archives are saved
+  host_key_check: accept-new    # or: strict
+  wrap_logs: false              # start log/output screens with line wrapping
+  hide_stopped: false           # list running containers only
+  stats_interval: 2             # Stats refresh, seconds (1–60)
+  no_sql_history: false         # do not persist SQL query history
+  sql_history_size: 200         # queries kept per database
+
 commands:
   - name: "Cache"
     commands:
@@ -96,6 +120,8 @@ servers:
     user: "root"
     key: "~/.ssh/id_ed25519"
     type: ssh
+    docker_cmd: "sudo -n docker"     # optional: user not in the docker group (or "podman")
+    root_path: "/var/www/html"       # optional: default app root for this server's containers
     containers:
       - name: "myapp-*"               # glob pattern supported
         display_name: "My App"
@@ -129,6 +155,29 @@ servers:
 | `custom_logs` | []string | Extra log file paths shown in Server Logs |
 | `commands` | []CommandGroup | Per-container command groups (appear before global commands) |
 
+### Server options
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Shown in the server list (unique) |
+| `type` | `ssh` \| `local` | Remote server over SSH, or this machine's Docker |
+| `host`, `port`, `user` | | SSH connection (`port` defaults to 22) |
+| `key` | path | Private key; empty = ssh-agent / default keys |
+| `docker_cmd` | string | How to invoke Docker on that host, e.g. `sudo -n docker` when your user is not in the `docker` group (needs passwordless sudo for docker), `docker --context prod`, or `podman`. Every `docker` call laradok makes there — including Terminal and Docker Logs — goes through it. Default: `docker` |
+| `root_path` | path | Default app root for containers on this server that do not set their own `root_path` |
+
+### Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `downloads_dir` | `~/Downloads` | Where database dumps and archives are saved |
+| `host_key_check` | `accept-new` | `strict` refuses servers that are not already in `~/.ssh/known_hosts` (the error shows the key fingerprint and the `ssh-keyscan` command to add it) |
+| `wrap_logs` | `false` | Start log and output screens with line wrapping on (`f2` toggles) |
+| `hide_stopped` | `false` | List running containers only |
+| `stats_interval` | `2` | Seconds between Stats screen samples (1–60) |
+| `no_sql_history` | `false` | Do not save SQL query history (the Settings screen can also clear it) |
+| `sql_history_size` | `200` | Queries kept per database |
+
 ### SSH authentication
 
 laradok tries auth methods in this order:
@@ -139,7 +188,7 @@ laradok tries auth methods in this order:
 
 ### Host key verification
 
-Server host keys are checked against `~/.ssh/known_hosts` (the same file OpenSSH uses), with `accept-new` semantics:
+Server host keys are checked against `~/.ssh/known_hosts` (the same file OpenSSH uses), with `accept-new` semantics by default (`host_key_check: strict` refuses unknown servers instead):
 
 - a server you have never connected to is trusted on first use and its key is recorded;
 - a server whose key **differs** from the recorded one is refused with a "host key mismatch" error — that is what a man-in-the-middle attack looks like. If the server was legitimately reinstalled, remove the old entry with `ssh-keygen -R <host>` (or `ssh-keygen -R '[host]:port'`).

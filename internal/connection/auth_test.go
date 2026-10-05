@@ -153,7 +153,7 @@ func TestConnectSSHViaAgentAndDefaultKnownHosts(t *testing.T) {
 	}()
 	t.Setenv("SSH_AUTH_SOCK", sock)
 
-	c, err := ConnectSSH("127.0.0.1", s.port(), "tester", "", "")
+	c, err := ConnectSSH("127.0.0.1", s.port(), "tester", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

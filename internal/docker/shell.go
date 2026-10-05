@@ -10,6 +10,9 @@ import (
 type ShellTarget struct {
 	ContainerID string
 
+	// DockerCLI replaces the docker command (e.g. "sudo docker"); "" = docker.
+	DockerCLI string
+
 	// SSH connection details. When Host is empty the container is reached via
 	// the local docker socket; otherwise the system `ssh` binary is used.
 	Host    string
@@ -29,8 +32,15 @@ const innerShellCmd = `clear 2>/dev/null || printf '\033[2J\033[H'; exec $(comma
 // container. For local hosts it execs `docker exec -it`; for SSH hosts it shells
 // out to `ssh -t` so the remote allocates a PTY.
 func InteractiveShellCmd(t ShellTarget) *exec.Cmd {
+	// The docker invocation as host shell text (with the docker function of a
+	// custom docker CLI in front).
+	dockerExec := dockerPrelude(t.DockerCLI) + "docker exec -it " + shellQuote(t.ContainerID) + " sh -c " + shellQuote(innerShellCmd)
+
 	if t.Host == "" {
-		return exec.Command("docker", "exec", "-it", t.ContainerID, "sh", "-c", innerShellCmd)
+		if t.DockerCLI == "" || t.DockerCLI == DefaultDockerCLI {
+			return exec.Command("docker", "exec", "-it", t.ContainerID, "sh", "-c", innerShellCmd)
+		}
+		return exec.Command("sh", "-c", dockerExec)
 	}
 
 	args := []string{"-t"}
@@ -45,10 +55,8 @@ func InteractiveShellCmd(t ShellTarget) *exec.Cmd {
 		dest = t.User + "@" + t.Host
 	}
 	// "--" ends option parsing so a host value starting with "-" cannot be
-	// read as an ssh option. The remote side joins the command words and
-	// hands them to a shell, so each word is quoted individually.
-	args = append(args, "--", dest,
-		"docker", "exec", "-it", shellQuote(t.ContainerID), "sh", "-c", shellQuote(innerShellCmd),
-	)
+	// read as an ssh option. The remote side hands the command to the login
+	// shell, so it is wrapped in sh -c as one quoted word.
+	args = append(args, "--", dest, HostShCmd(dockerExec))
 	return exec.Command("ssh", args...)
 }

@@ -95,12 +95,12 @@ func TestContainerEnvErrors(t *testing.T) {
 func TestListContainersFake(t *testing.T) {
 	dir, r := fakeDocker(t)
 	writeFixture(t, dir, "ps.out", `{"id":"a1","name":"web","image":"i","state":"running","status":"Up","ports":""}`+"\n")
-	cs, err := ListContainers(r)
+	cs, err := ListContainers(r, true)
 	if err != nil || len(cs) != 1 || cs[0].Name != "web" {
 		t.Fatalf("got %+v %v", cs, err)
 	}
 	os.Remove(filepath.Join(dir, "ps.out"))
-	if _, err := ListContainers(r); err == nil {
+	if _, err := ListContainers(r, true); err == nil {
 		t.Fatal("want error")
 	}
 }

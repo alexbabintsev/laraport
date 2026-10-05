@@ -2,6 +2,7 @@ package connection
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -189,5 +190,32 @@ func TestSSHHostKeyTOFUAndMismatch(t *testing.T) {
 	_, err = connectSSH("127.0.0.1", s2.port(), "tester", s2.clientKey, "", hostKeyPolicy{path: kh})
 	if err == nil || !strings.Contains(err.Error(), "host key mismatch") {
 		t.Fatalf("want host key mismatch, got %v", err)
+	}
+}
+
+func TestSSHStrictHostKeys(t *testing.T) {
+	s := newTestSSHServer(t)
+	kh := emptyKnownHosts(t)
+	_, err := connectSSH("127.0.0.1", s.port(), "tester", s.clientKey, "", hostKeyPolicy{path: kh, strict: true})
+	if err == nil || !strings.Contains(err.Error(), "unknown host") || !strings.Contains(err.Error(), "SHA256:") ||
+		!strings.Contains(err.Error(), "ssh-keyscan -p ") {
+		t.Fatalf("strict unknown host: %v", err)
+	}
+	if data, _ := os.ReadFile(kh); len(data) != 0 {
+		t.Fatal("strict mode recorded the key")
+	}
+	// Once known (recorded by an accept-new connection), strict mode connects.
+	c, err := connectSSH("127.0.0.1", s.port(), "tester", s.clientKey, "", hostKeyPolicy{path: kh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	c, err = connectSSH("127.0.0.1", s.port(), "tester", s.clientKey, "", hostKeyPolicy{path: kh, strict: true})
+	if err != nil {
+		t.Fatalf("strict known host: %v", err)
+	}
+	c.Close()
+	if got := keyscanTarget("example.com:22"); got != "example.com" {
+		t.Fatalf("keyscan target %q", got)
 	}
 }

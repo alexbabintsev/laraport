@@ -15,16 +15,24 @@ import (
 const (
 	statsHistoryLen      = 60 // samples kept per metric (also the max sparkline width)
 	statsMaxWidth        = statsHistoryLen
-	statsIntervalSeconds = 2.0
+	defaultStatsInterval = 2 * time.Second
 )
 
 // scheduleSample requests the next stats poll after the refresh interval. The
 // App handles StatsTickMsg by sampling docker stats and replying with a
 // StatsSampleMsg, keeping the runner out of this screen.
-func scheduleSample(sortBy docker.ProcSortBy) tea.Cmd {
-	return tea.Tick(time.Duration(statsIntervalSeconds*float64(time.Second)), func(time.Time) tea.Msg {
+func (s *StatsScreen) scheduleSample() tea.Cmd {
+	sortBy := s.sortBy
+	return tea.Tick(s.interval, func(time.Time) tea.Msg {
 		return msgs.StatsTickMsg{SortProcs: sortBy}
 	})
+}
+
+// SetInterval sets the refresh interval (from the settings).
+func (s *StatsScreen) SetInterval(d time.Duration) {
+	if d > 0 {
+		s.interval = d
+	}
 }
 
 var sparkRunes = []rune("▁▂▃▄▅▆▇█")
@@ -33,6 +41,8 @@ var sparkRunes = []rune("▁▂▃▄▅▆▇█")
 // polling `docker stats` on an interval.
 type StatsScreen struct {
 	containerName string
+	interval      time.Duration // refresh interval
+	lastAt        time.Time     // when the previous sample arrived
 
 	cpuHist   []float64 // CPU %
 	memHist   []float64 // memory bytes
@@ -59,6 +69,7 @@ type StatsScreen struct {
 func NewStatsScreen(containerName string, width, height int) *StatsScreen {
 	return &StatsScreen{
 		containerName: containerName,
+		interval:      defaultStatsInterval,
 		width:         width,
 		height:        height,
 	}
@@ -99,7 +110,7 @@ func (s *StatsScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			s.errMsg = msg.Err.Error()
 			// keep polling — the container may just be starting
-			return s, scheduleSample(s.sortBy)
+			return s, s.scheduleSample()
 		}
 		s.errMsg = ""
 		sm := msg.Sample
@@ -111,10 +122,16 @@ func (s *StatsScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.cpuHist = pushHist(s.cpuHist, sm.CPUPercent)
 		s.memHist = pushHist(s.memHist, sm.MemBytes)
 
-		// Network/Disk are cumulative totals — chart the per-interval rate.
+		// Network/Disk are cumulative totals — chart the per-second rate over
+		// the time actually elapsed between samples (interval + sampling time).
+		now := time.Now()
 		if s.hasLast {
-			net := (sm.NetTotal - s.lastNet) / statsIntervalSeconds
-			disk := (sm.BlockTotal - s.lastBlock) / statsIntervalSeconds
+			elapsed := now.Sub(s.lastAt).Seconds()
+			if elapsed <= 0 {
+				elapsed = s.interval.Seconds()
+			}
+			net := (sm.NetTotal - s.lastNet) / elapsed
+			disk := (sm.BlockTotal - s.lastBlock) / elapsed
 			if net < 0 {
 				net = 0
 			}
@@ -128,9 +145,10 @@ func (s *StatsScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		s.lastNet = sm.NetTotal
 		s.lastBlock = sm.BlockTotal
+		s.lastAt = now
 		s.hasLast = true
 
-		return s, scheduleSample(s.sortBy)
+		return s, s.scheduleSample()
 
 	case tea.KeyMsg:
 		switch msg.String() {

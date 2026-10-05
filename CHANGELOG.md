@@ -7,6 +7,12 @@ All notable changes to laradok are documented here.
 ## [Unreleased]
 
 ### Added
+- **Server management in the UI** — on the server list: `a` add, `e` edit, `d` delete (with confirmation, naming the container settings removed with it). The form validates input (unique name, host/user for SSH, port range, key file exists) and `ctrl+t` tests the connection (`docker version`). Adding a server keeps the implicit Local server in the config; deleting the last server brings it back
+- **Per-server `docker_cmd`** — e.g. `sudo -n docker` for users outside the `docker` group, `docker --context …` or `podman`. Applied to every Docker call on that server, including Terminal and Docker Logs, via a shell function in front of each host command, so data inside containers or quoted arguments is never rewritten
+- **Per-server `root_path`** — default app root for containers without their own
+- **Settings screen** (`s` on the server list) and `settings:` block in the config — downloads folder, SSH host key policy (`accept-new` / `strict`), default line wrapping, show/hide stopped containers, Stats refresh interval, SQL history on/off and size, plus a button to clear SQL history
+- **`host_key_check: strict`** — refuses servers not already in `~/.ssh/known_hosts`; the error shows the key fingerprint and the `ssh-keyscan` command to add it
+- The first time laradok rewrites `config.yaml` it keeps the original as `config.yaml.bak` (comments are not preserved by rewrites)
 - **Test suite and CI** — unit tests for every package (in-process SSH server, fake `docker` CLI, TUI orchestration and screens) plus Docker integration tests across busybox/dash/bash shells and PostgreSQL, MariaDB, Redis and MongoDB; GitHub Actions runs them with the race detector on Linux and macOS together with `govulncheck`, and releases are gated on them
 - **Edit container config from the UI** — press `e` on a container in the list to open a form for its display name, root path, favorite and hidden flags
   - Saves back to `config.yaml` (`Config.Save`), creating an exact-name entry that takes precedence over any glob rule
@@ -58,6 +64,7 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- Stats network/disk rates are computed over the time actually elapsed between samples, so they stay correct with any refresh interval
 - **Log viewer reads by byte offset** — opening a log reads the last 256 KB with a seek (`dd skip`) and follows from that exact offset (`tail -c +N -f`); scrolling up loads the 256 KB before the earliest loaded byte. Previously opening counted every line (`wc -l`) and each scroll-back chunk was read with `sed -n 'a,bp'`, which scans the file from the start — both grew with the file size. Opening and paging a 1 GB log now takes the same ~0.2 s as a 1 MB one. The status bar shows `position / size  percent` in bytes
 - **Log pickers list instantly** — files are listed from metadata only (size, dates); line counts are computed in the background and filled in as each finishes, and counting stops when you leave the picker
 - Saved `config.yaml` omits empty optional fields; `port` defaults to 22 only for SSH servers

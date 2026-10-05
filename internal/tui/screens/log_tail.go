@@ -241,3 +241,10 @@ func (s *LogTailScreen) View() string {
 	content := lipgloss.JoinVertical(lipgloss.Left, header, "", vpView)
 	return styles.PinToBottom(s.height, content, help)
 }
+
+// SetWrap sets whether long lines are wrapped (the default comes from the
+// settings; f2 toggles it).
+func (s *LogTailScreen) SetWrap(on bool) {
+	s.wrap = on
+	s.setContent()
+}

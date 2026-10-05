@@ -309,12 +309,12 @@ func TestPrependLines(t *testing.T) {
 }
 
 func TestConnectServerTypes(t *testing.T) {
-	r, err := connectServer(config.Server{Type: config.ServerTypeLocal})
+	r, err := connectServer(config.Server{Type: config.ServerTypeLocal}, false)
 	if err != nil || r == nil {
 		t.Fatalf("local: %v", err)
 	}
 	r.Close()
-	if _, err := connectServer(config.Server{Type: config.ServerTypeSSH, Host: "127.0.0.1", Port: 1, Key: "/nonexistent"}); err == nil {
+	if _, err := connectServer(config.Server{Type: config.ServerTypeSSH, Host: "127.0.0.1", Port: 1, Key: "/nonexistent"}, false); err == nil {
 		t.Fatal("ssh with a missing key connected")
 	}
 }

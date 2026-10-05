@@ -12,6 +12,7 @@ type ConfirmScreen struct {
 	title  string
 	detail string
 	run    msgs.PushOutputMsg
+	then   tea.Msg // dispatched instead of run when set
 	width  int
 	height int
 }
@@ -26,6 +27,12 @@ func NewConfirmScreen(title, detail string, run msgs.PushOutputMsg, width, heigh
 	}
 }
 
+// NewConfirmActionScreen asks to confirm an action other than running a
+// command; then is dispatched on "y".
+func NewConfirmActionScreen(title, detail string, then tea.Msg, width, height int) *ConfirmScreen {
+	return &ConfirmScreen{title: title, detail: detail, then: then, width: width, height: height}
+}
+
 func (s *ConfirmScreen) Init() tea.Cmd { return nil }
 
 func (s *ConfirmScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -35,8 +42,8 @@ func (s *ConfirmScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return s, tea.Quit
 		case "y", "Y", "enter":
-			run := s.run
-			return s, func() tea.Msg { return msgs.ConfirmedMsg{Run: run} }
+			run, then := s.run, s.then
+			return s, func() tea.Msg { return msgs.ConfirmedMsg{Run: run, Then: then} }
 		case "n", "N", "esc":
 			return s, func() tea.Msg { return msgs.PopMsg{} }
 		}
@@ -54,10 +61,14 @@ func (s *ConfirmScreen) View() string {
 		Render("⚠ This action cannot be undone.")
 	prompt := lipgloss.NewStyle().Foreground(styles.ColorText).
 		Render(s.title)
+	detail := s.detail
+	if s.then == nil {
+		detail = "$ " + detail // a command
+	}
 	cmdBox := lipgloss.NewStyle().
 		Foreground(styles.ColorAccent).
 		Padding(0, 1).
-		Render("$ " + s.detail)
+		Render(detail)
 
 	body := lipgloss.NewStyle().Padding(1, 2).Render(
 		lipgloss.JoinVertical(lipgloss.Left,

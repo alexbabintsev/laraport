@@ -40,6 +40,7 @@ type App struct {
 // cfgPath is where container-config edits are written back.
 func NewApp(cfg *config.Config, cfgPath string) *App {
 	app := &App{cfg: cfg, cfgPath: cfgPath}
+	docker.SetDownloadsDir(cfg.Settings.Downloads())
 	return app
 }
 
@@ -106,7 +107,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.activeServer = msg.Server
 		a.connectAttempt++
 		screen := screens.NewContainerListScreen(msg.Server, nil, a.width, a.height)
-		return a, tea.Batch(a.push(screen), connectServerCmd(msg.Server, a.connectAttempt))
+		screen.SetShowStopped(!a.cfg.Settings.HideStopped)
+		return a, tea.Batch(a.push(screen), connectServerCmd(msg.Server, a.connectAttempt, a.cfg.Settings.StrictHostKeys()))
 
 	case msgs.ServerConnectedMsg:
 		if msg.Attempt != a.connectAttempt {
@@ -128,6 +130,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.PushMainMenuMsg:
 		a.container = msg.Container
 		a.containerCfg, _ = a.activeServer.FindContainerConfig(msg.Container.Name)
+		if a.containerCfg.RootPath == "" {
+			// The server's default root (if any) applies to containers
+			// without their own.
+			a.containerCfg.RootPath = a.activeServer.RootPath
+		}
 		screen := screens.NewMainMenuScreen(msg.Container, a.containerCfg, a.width, a.height)
 		return a, tea.Batch(a.push(screen), a.loadCapsCmd())
 
@@ -178,7 +185,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.push(screen)
 
 	case msgs.PushOutputMsg:
-		screen := screens.NewOutputScreen(msg.Title, a.width, a.height)
+		screen := a.newOutputScreen(msg.Title)
 		return a, a.openStream(screen, a.commandStarter(msg))
 
 	case msgs.PushInfoMsg:
@@ -187,10 +194,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msgs.PushStatsMsg:
 		screen := screens.NewStatsScreen(a.container.Name, a.width, a.height)
+		screen.SetInterval(a.cfg.Settings.StatsEvery())
 		return a, tea.Batch(a.push(screen), a.sampleStatsCmd(docker.SortByCPU))
 
 	case msgs.OpenTerminalMsg:
-		target := docker.ShellTarget{ContainerID: a.container.ID}
+		target := docker.ShellTarget{ContainerID: a.container.ID, DockerCLI: a.activeServer.DockerCmd}
 		if a.activeServer.Type == config.ServerTypeSSH {
 			target.Host = a.activeServer.Host
 			target.Port = a.activeServer.Port
@@ -234,12 +242,70 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.push(screen)
 
 	case msgs.PushConfirmMsg:
+		if msg.Then != nil {
+			return a, a.push(screens.NewConfirmActionScreen(msg.Title, msg.Detail, msg.Then, a.width, a.height))
+		}
 		screen := screens.NewConfirmScreen(msg.Title, msg.Detail, msg.Run, a.width, a.height)
 		return a, a.push(screen)
 
+	case msgs.PushServerEditMsg:
+		return a, a.push(screens.NewServerEditScreen(msg.Original, msg.Server, a.width, a.height))
+
+	case msgs.SaveServerMsg:
+		err := a.saveServer(msg.Original, msg.Server)
+		updated, cmd := a.top().Update(msgs.ServerSavedMsg{Err: err})
+		a.stack[len(a.stack)-1] = updated
+		if err != nil {
+			return a, cmd
+		}
+		status := "Added " + msg.Server.Name + "."
+		if msg.Original != "" {
+			status = "Saved " + msg.Server.Name + "."
+		}
+		return a, tea.Batch(cmd, a.refreshServerList(status, msg.Server.Name))
+
+	case msgs.DeleteServerMsg:
+		if err := a.deleteServer(msg.Name); err != nil {
+			return a, a.serverListError(err)
+		}
+		return a, a.refreshServerList("Deleted "+msg.Name+".", "")
+
+	case msgs.TestConnectionMsg:
+		srv, strict := msg.Server, a.cfg.Settings.StrictHostKeys()
+		return a, func() tea.Msg {
+			result, err := testConnection(srv, strict)
+			return msgs.ConnectionTestedMsg{Result: result, Err: err}
+		}
+
+	case msgs.ConnectionTestedMsg:
+		updated, cmd := a.top().Update(msg)
+		a.stack[len(a.stack)-1] = updated
+		return a, cmd
+
+	case msgs.PushSettingsMsg:
+		return a, a.push(screens.NewSettingsScreen(a.cfg.Settings, a.width, a.height))
+
+	case msgs.SaveSettingsMsg:
+		err := a.saveSettings(msg.Settings)
+		updated, cmd := a.top().Update(msgs.SettingsSavedMsg{Err: err})
+		a.stack[len(a.stack)-1] = updated
+		return a, cmd
+
+	case msgs.ClearSQLHistoryMsg:
+		return a, func() tea.Msg { return msgs.SQLHistoryClearedMsg{Err: config.ClearSQLHistory()} }
+
+	case msgs.SQLHistoryClearedMsg:
+		updated, cmd := a.top().Update(msg)
+		a.stack[len(a.stack)-1] = updated
+		return a, cmd
+
 	case msgs.ConfirmedMsg:
-		// Pop the confirmation screen, then run the confirmed command.
+		// Pop the confirmation screen, then run the confirmed command/action.
 		a.pop()
+		if msg.Then != nil {
+			then := msg.Then
+			return a, func() tea.Msg { return then }
+		}
 		run := msg.Run
 		return a, func() tea.Msg { return run }
 
@@ -361,18 +427,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.push(screen)
 
 	case msgs.PushSQLInputMsg:
-		history := config.LoadSQLHistory(msg.HistoryKey)
+		var history []string
+		if a.cfg.Settings.SQLHistoryLimit() > 0 {
+			history = config.LoadSQLHistory(msg.HistoryKey)
+		}
 		screen := screens.NewSQLInputScreen(msg.DBName, msg.User, msg.Password, msg.Engine, msg.HistoryKey, history, a.width, a.height)
 		return a, a.push(screen)
 
 	case msgs.PushSQLExecMsg:
-		config.SaveSQLHistory(msg.HistoryKey, msg.History) //nolint:errcheck // history is best-effort
+		config.SaveSQLHistory(msg.HistoryKey, msg.History, a.cfg.Settings.SQLHistoryLimit()) //nolint:errcheck // history is best-effort
 		hc := docker.DBExecHostCmd(msg.Engine, a.container.ID, msg.User, msg.Password, msg.DBName, msg.SQL)
-		screen := screens.NewOutputScreen(msg.Title, a.width, a.height)
+		screen := a.newOutputScreen(msg.Title)
 		return a, a.openStream(screen, a.commandStarter(msgs.PushOutputMsg{Title: msg.Title, Host: hc}))
 
 	case msgs.PushDBDownloadMsg:
-		screen := screens.NewOutputScreen("Download dump — "+msg.DBName, a.width, a.height)
+		screen := a.newOutputScreen("Download dump — " + msg.DBName)
 		runner, containerID := a.runner, a.container.ID
 		return a, a.openStream(screen, func() (<-chan string, func(), error) {
 			switch {
@@ -390,7 +459,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 
 	case msgs.PushRedisDumpMsg:
-		screen := screens.NewOutputScreen("Download RDB — "+a.container.Name, a.width, a.height)
+		screen := a.newOutputScreen("Download RDB — " + a.container.Name)
 		runner, containerID := a.runner, a.container.ID
 		return a, a.openStream(screen, func() (<-chan string, func(), error) {
 			pass, err := docker.DetectRedisPassword(runner, containerID)
@@ -401,14 +470,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		})
 
 	case msgs.PushMongoDumpMsg:
-		screen := screens.NewOutputScreen("Download dump — "+a.container.Name, a.width, a.height)
+		screen := a.newOutputScreen("Download dump — " + a.container.Name)
 		runner, containerID := a.runner, a.container.ID
 		return a, a.openStream(screen, func() (<-chan string, func(), error) {
 			return docker.DumpMongo(runner, containerID, msg.User, msg.Password)
 		})
 
 	case msgs.PushStorageDownloadMsg:
-		screen := screens.NewOutputScreen("Download Storage — "+a.container.Name, a.width, a.height)
+		screen := a.newOutputScreen("Download Storage — " + a.container.Name)
 		return a, a.openStream(screen, a.storageDownloadStarter())
 
 	case msgs.PushFileBrowserMsg:
@@ -430,7 +499,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case msgs.PushPathDownloadMsg:
-		screen := screens.NewOutputScreen("Download — "+msg.Path, a.width, a.height)
+		screen := a.newOutputScreen("Download — " + msg.Path)
 		runner, containerID, containerName := a.runner, a.container.ID, a.container.Name
 		return a, a.openStream(screen, func() (<-chan string, func(), error) {
 			return docker.DownloadPath(runner, containerID, containerName, msg.Path)
@@ -480,6 +549,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			title = "Docker Logs"
 		}
 		screen := screens.NewLogTailScreen(title, a.width, a.height)
+		screen.SetWrap(a.cfg.Settings.WrapLogs)
 		// Track file path for lazy chunk loading; docker logs have no path.
 		a.logFilePath, a.logOffset = "", -1
 		if msg.LogType != "docker" && msg.FilePath != "" {
@@ -585,19 +655,122 @@ func (a *App) View() string {
 }
 
 // connectServerCmd connects to a server asynchronously and returns a ServerConnectedMsg.
-func connectServerCmd(s config.Server, attempt uint64) tea.Cmd {
+func connectServerCmd(s config.Server, attempt uint64, strictHostKeys bool) tea.Cmd {
 	return func() tea.Msg {
-		runner, err := connectServer(s)
+		runner, err := connectServer(s, strictHostKeys)
 		return msgs.ServerConnectedMsg{Server: s, Runner: runner, Err: err, Attempt: attempt}
 	}
 }
 
-// connectServer creates a runner for the given server config.
-func connectServer(s config.Server) (docker.Runner, error) {
+// connectServer creates a runner for the given server config, using the
+// server's docker command.
+func connectServer(s config.Server, strictHostKeys bool) (docker.Runner, error) {
 	if s.Type == config.ServerTypeSSH {
-		return connection.ConnectSSH(s.Host, s.Port, s.User, s.Key, s.Passphrase)
+		c, err := connection.ConnectSSH(s.Host, s.Port, s.User, s.Key, s.Passphrase, strictHostKeys)
+		if err != nil {
+			return nil, err
+		}
+		return docker.WithDockerCLI(c, s.DockerCmd), nil
 	}
-	return connection.NewLocalClient(), nil
+	return docker.WithDockerCLI(connection.NewLocalClient(), s.DockerCmd), nil
+}
+
+// testConnection connects to s and asks Docker for its version.
+func testConnection(s config.Server, strictHostKeys bool) (string, error) {
+	r, err := connectServer(s, strictHostKeys)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	v, err := docker.ServerVersion(r)
+	if err != nil {
+		return "", err
+	}
+	return "Docker " + v, nil
+}
+
+// newOutputScreen creates an output screen with the configured wrapping.
+func (a *App) newOutputScreen(title string) *screens.OutputScreen {
+	s := screens.NewOutputScreen(title, a.width, a.height)
+	s.SetWrap(a.cfg.Settings.WrapLogs)
+	return s
+}
+
+// saveServer adds (original == "") or updates a server and writes the config;
+// the in-memory config is restored if writing fails.
+func (a *App) saveServer(original string, srv config.Server) error {
+	before := a.cfg.Servers
+	a.cfg.Servers = append([]config.Server(nil), before...)
+	var err error
+	if original == "" {
+		err = a.cfg.AddServer(srv)
+	} else {
+		err = a.cfg.UpdateServer(original, srv)
+	}
+	if err == nil {
+		err = a.cfg.Save(a.cfgPath)
+	}
+	if err != nil {
+		a.cfg.Servers = before
+	}
+	return err
+}
+
+// deleteServer removes a server and writes the config (restored on failure).
+func (a *App) deleteServer(name string) error {
+	before := a.cfg.Servers
+	a.cfg.Servers = append([]config.Server(nil), before...)
+	err := a.cfg.DeleteServer(name)
+	if err == nil {
+		err = a.cfg.Save(a.cfgPath)
+	}
+	if err != nil {
+		a.cfg.Servers = before
+	}
+	return err
+}
+
+// saveSettings validates, stores and applies new settings.
+func (a *App) saveSettings(st config.Settings) error {
+	if err := st.Validate(); err != nil {
+		return err
+	}
+	before := a.cfg.Settings
+	a.cfg.Settings = st
+	if err := a.cfg.Save(a.cfgPath); err != nil {
+		a.cfg.Settings = before
+		return err
+	}
+	docker.SetDownloadsDir(st.Downloads())
+	return nil
+}
+
+// refreshServerList pushes the current servers to the server list screen.
+func (a *App) refreshServerList(status, selectName string) tea.Cmd {
+	servers := append([]config.Server(nil), a.cfg.Servers...)
+	for i, m := range a.stack {
+		if sl, ok := m.(*screens.ServerListScreen); ok {
+			updated, cmd := sl.Update(msgs.ServerListChangedMsg{Servers: servers, Status: status})
+			a.stack[i] = updated
+			if selectName != "" {
+				return tea.Batch(cmd, sl.SetServers(servers, selectName))
+			}
+			return cmd
+		}
+	}
+	return nil
+}
+
+// serverListError shows err on the server list screen.
+func (a *App) serverListError(err error) tea.Cmd {
+	for i, m := range a.stack {
+		if sl, ok := m.(*screens.ServerListScreen); ok {
+			updated, cmd := sl.Update(msgs.ServerListChangedMsg{Err: err})
+			a.stack[i] = updated
+			return cmd
+		}
+	}
+	return nil
 }
 
 // startLineCount counts the lines of the logs listed by the top screen in the

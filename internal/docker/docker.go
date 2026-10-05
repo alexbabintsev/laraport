@@ -56,11 +56,15 @@ func runOutput(r Runner, cmd string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
-// ListContainers returns all containers on the target host, including stopped
-// ones (docker ps -a).
-func ListContainers(r Runner) ([]Container, error) {
+// ListContainers returns the containers on the target host: all of them
+// (docker ps -a) when all is set, otherwise only running ones.
+func ListContainers(r Runner, all bool) ([]Container, error) {
 	format := `{"id":{{json .ID}},"name":{{json .Names}},"image":{{json .Image}},"state":{{json .State}},"status":{{json .Status}},"ports":{{json .Ports}}}`
-	out, err := r.RunOutput("docker ps -a --format "+shellQuote(format), "")
+	flags := ""
+	if all {
+		flags = "-a "
+	}
+	out, err := r.RunOutput("docker ps "+flags+"--format "+shellQuote(format), "")
 	if err != nil {
 		return nil, fmt.Errorf("docker ps: %w", err)
 	}
@@ -345,7 +349,9 @@ func ListLogFiles(r Runner, containerID, rootPath string) ([]LogFileInfo, error)
 
 // TailDockerLogs streams the Docker container logs (stdout/stderr) in real-time.
 func TailDockerLogs(r Runner, containerID string) (<-chan string, func(), error) {
-	return Stream(r, HostStreamScript("docker logs -f --tail 100 "+shellQuote(containerID)))
+	// The script runs in a nested host shell, which does not inherit the
+	// docker function of a custom docker CLI — define it there too.
+	return Stream(r, HostStreamScript(dockerPrelude(runnerDockerCLI(r))+"docker logs -f --tail 100 "+shellQuote(containerID)))
 }
 
 // HostLog represents a discovered log file on the host server.

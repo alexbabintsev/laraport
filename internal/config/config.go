@@ -25,6 +25,8 @@ type Server struct {
 	Key        string            `yaml:"key,omitempty"`
 	Passphrase string            `yaml:"passphrase,omitempty"`
 	Type       ServerType        `yaml:"type"`
+	DockerCmd  string            `yaml:"docker_cmd,omitempty"` // docker CLI invocation, e.g. "sudo -n docker" or "podman" (default "docker")
+	RootPath   string            `yaml:"root_path,omitempty"`  // default app root for this server's containers
 	Containers []ContainerConfig `yaml:"containers,omitempty"`
 
 	// implicit marks the Local server added when the config defines none; it
@@ -81,6 +83,7 @@ type ContainerConfig struct {
 }
 
 type Config struct {
+	Settings Settings       `yaml:"settings,omitempty"`
 	Servers  []Server       `yaml:"servers,omitempty"`
 	Commands []CommandGroup `yaml:"commands,omitempty"`
 }
@@ -144,6 +147,8 @@ func DefaultConfigPath() string {
 // absolute path that Load expanded. The whole file is rewritten, so any
 // comments or custom formatting in the original are not preserved.
 //
+// The first rewrite keeps the original as <path>.bak.
+//
 // The file may hold SSH key passphrases, so it is written with mode 0600, and
 // atomically (temp file + rename) so a crash cannot leave it truncated. If
 // path is a symlink (e.g. a dotfiles checkout), the link target is updated.
@@ -166,7 +171,38 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
+	if err := backupOnce(path); err != nil {
+		return err
+	}
 	return writeFileAtomic(path, data)
+}
+
+// backupOnce copies an existing config to <path>.bak (mode 0600) the first
+// time laradok rewrites it, since Save drops comments and formatting. An
+// existing backup is never overwritten.
+func backupOnce(path string) error {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil // nothing to back up yet
+	}
+	if err != nil {
+		return fmt.Errorf("reading %s for backup: %w", path, err)
+	}
+	f, err := os.OpenFile(path+".bak", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("creating backup: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return fmt.Errorf("writing backup: %w", err)
+	}
+	return f.Close()
 }
 
 // writeFileAtomic replaces path (or the file it links to) with data, mode 0600.

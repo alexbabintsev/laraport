@@ -33,8 +33,12 @@ func defaultKnownHostsPath() (string, error) {
 //     is appended to the file;
 //   - a host whose key differs from the recorded one is rejected — that is
 //     what a man-in-the-middle looks like.
+//
+// With strict set, unknown hosts are refused as well (like
+// StrictHostKeyChecking=yes): the key must be added to known_hosts by hand.
 type hostKeyPolicy struct {
-	path string
+	path   string
+	strict bool
 }
 
 // callback returns the ssh.HostKeyCallback implementing the policy. The file
@@ -56,6 +60,12 @@ func (p hostKeyPolicy) callback() (ssh.HostKeyCallback, error) {
 		}
 		var keyErr *knownhosts.KeyError
 		if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
+			if p.strict {
+				return fmt.Errorf("unknown host %s (key %s) and host_key_check is strict. "+
+					"Verify the fingerprint with the server's administrator, then add it with: "+
+					"ssh-keyscan %s >> %s",
+					hostname, ssh.FingerprintSHA256(key), keyscanTarget(hostname), p.path)
+			}
 			// Unknown host: trust on first use.
 			return p.add(hostname, key)
 		}
@@ -108,6 +118,18 @@ func algorithmsForKeyType(keyType string) []string {
 		return []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA}
 	}
 	return []string{keyType}
+}
+
+// keyscanTarget renders host:port as ssh-keyscan arguments.
+func keyscanTarget(hostport string) string {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || port == "22" {
+		if err != nil {
+			return hostport
+		}
+		return host
+	}
+	return "-p " + port + " " + host
 }
 
 // add appends a known_hosts line for the host.
