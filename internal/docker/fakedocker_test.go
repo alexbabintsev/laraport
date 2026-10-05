@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexbabintsev/laradok/internal/connection"
+	"github.com/alexbabintsev/laraport/internal/connection"
 )
 
 // fakeDockerScript stands in for the docker CLI in hermetic tests:

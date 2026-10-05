@@ -1,9 +1,9 @@
 package docker
 
 // Integration tests against a real Docker daemon. They create throwaway
-// containers labelled laradok-test and remove them afterwards.
+// containers labelled laraport-test and remove them afterwards.
 //
-// Run with: LARADOK_INTEGRATION=1 go test ./internal/docker/
+// Run with: LARAPORT_INTEGRATION=1 go test ./internal/docker/
 
 import (
 	"archive/tar"
@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexbabintsev/laradok/internal/connection"
+	"github.com/alexbabintsev/laraport/internal/connection"
 )
 
 func requireIntegration(t *testing.T) {
 	t.Helper()
-	if os.Getenv("LARADOK_INTEGRATION") != "1" {
-		t.Skip("set LARADOK_INTEGRATION=1 to run Docker integration tests")
+	if os.Getenv("LARAPORT_INTEGRATION") != "1" {
+		t.Skip("set LARAPORT_INTEGRATION=1 to run Docker integration tests")
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skipf("docker not available: %v", err)
@@ -34,7 +34,7 @@ func requireIntegration(t *testing.T) {
 // startContainer runs image detached and returns its ID.
 func startContainer(t *testing.T, image string, args ...string) string {
 	t.Helper()
-	full := append([]string{"run", "-d", "--label", "laradok-test=1"}, args...)
+	full := append([]string{"run", "-d", "--label", "laraport-test=1"}, args...)
 	// args may contain "--" separating docker flags from the image command.
 	var flags, cmd []string
 	split := -1
@@ -396,7 +396,7 @@ func tarEntries(t *testing.T, path string) map[string]int64 {
 
 func assertNoPartFiles(t *testing.T, dir string) {
 	t.Helper()
-	m, _ := filepath.Glob(filepath.Join(dir, ".laradok-*.part"))
+	m, _ := filepath.Glob(filepath.Join(dir, ".laraport-*.part"))
 	if len(m) != 0 {
 		t.Fatalf("temp files left behind: %v", m)
 	}
@@ -423,7 +423,7 @@ func gunzipString(t *testing.T, path string) string {
 // ("env … docker", standing in for "sudo -n docker").
 func TestIntegrationCustomDockerCLI(t *testing.T) {
 	requireIntegration(t)
-	r := WithDockerCLI(connection.NewLocalClient(), "env LARADOK_VIA_WRAPPER=1 docker")
+	r := WithDockerCLI(connection.NewLocalClient(), "env LARAPORT_VIA_WRAPPER=1 docker")
 	id := startContainer(t, "alpine:3.20", "--", "sh", "-c", "echo hello-from-logs; exec sleep 3600")
 
 	if v, err := ServerVersion(r); err != nil || v == "" {

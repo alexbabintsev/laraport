@@ -10,9 +10,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/docker"
-	"github.com/alexbabintsev/laradok/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/msgs"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )

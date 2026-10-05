@@ -179,7 +179,7 @@ func TestSaveSkipsImplicitLocalServer(t *testing.T) {
 
 func TestSaveFollowsSymlink(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "dotfiles", "laradok.yaml")
+	target := filepath.Join(dir, "dotfiles", "laraport.yaml")
 	os.MkdirAll(filepath.Dir(target), 0o755)
 	os.WriteFile(target, []byte("servers: []\n"), 0o644)
 	link := filepath.Join(dir, "config.yaml")
@@ -216,14 +216,14 @@ func TestUpsertPreservesCommandsAndLogs(t *testing.T) {
 func TestDefaultConfigPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if got := DefaultConfigPath(); got != filepath.Join(home, ".config", "laradok", "config.yaml") {
+	if got := DefaultConfigPath(); got != filepath.Join(home, ".config", "laraport", "config.yaml") {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func useTempHistory(t *testing.T) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "laradok", "sql_history.json")
+	p := filepath.Join(t.TempDir(), "laraport", "sql_history.json")
 	old := sqlHistoryPathFunc
 	sqlHistoryPathFunc = func() string { return p }
 	t.Cleanup(func() { sqlHistoryPathFunc = old })

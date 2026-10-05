@@ -338,14 +338,14 @@ func TestDBExecHostCmdDispatch(t *testing.T) {
 
 func TestMongoEvalCmd(t *testing.T) {
 	sh := MongoEvalCmd("c", "mongosh", "admin", "s3cret", "shop", "db.stats()")
-	if strings.Contains(sh.Cmd, "s3cret") || !strings.Contains(sh.Cmd, "process.env.LARADOK_MONGO_PASS") {
+	if strings.Contains(sh.Cmd, "s3cret") || !strings.Contains(sh.Cmd, "process.env.LARAPORT_MONGO_PASS") {
 		t.Errorf("mongosh = %s", sh.Cmd)
 	}
 	if sh.Input != "admin\ns3cret\n" {
 		t.Errorf("input = %q", sh.Input)
 	}
 	legacy := MongoEvalCmd("c", "mongo", "admin", "s3cret", "", "db.stats()")
-	if strings.Contains(legacy.Cmd, "s3cret") || !strings.Contains(legacy.Cmd, `-p "$LARADOK_MONGO_PASS"`) {
+	if strings.Contains(legacy.Cmd, "s3cret") || !strings.Contains(legacy.Cmd, `-p "$LARAPORT_MONGO_PASS"`) {
 		t.Errorf("legacy = %s", legacy.Cmd)
 	}
 	anon := MongoEvalCmd("c", "mongosh", "", "", "", "db.stats()")

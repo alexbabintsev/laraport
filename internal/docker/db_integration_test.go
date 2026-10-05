@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexbabintsev/laradok/internal/connection"
+	"github.com/alexbabintsev/laraport/internal/connection"
 )
 
 // trickyPassword exercises quoting: quotes, $, backslash, spaces, @ and %.

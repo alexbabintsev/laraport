@@ -51,7 +51,7 @@ jobs:
 
       - name: Integration tests
         env:
-          LARADOK_INTEGRATION: "1"
+          LARAPORT_INTEGRATION: "1"
         run: go test -race -count=1 ./internal/docker/ ./internal/connection/
 
   vulncheck:

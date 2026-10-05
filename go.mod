@@ -1,4 +1,4 @@
-module github.com/alexbabintsev/laradok
+module github.com/alexbabintsev/laraport
 
 go 1.26.1
 

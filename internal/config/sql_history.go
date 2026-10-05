@@ -18,7 +18,7 @@ func sqlHistoryPath() string {
 	if err != nil {
 		return "sql_history.json"
 	}
-	return filepath.Join(home, ".config", "laradok", "sql_history.json")
+	return filepath.Join(home, ".config", "laraport", "sql_history.json")
 }
 
 func loadAllSQLHistory() map[string][]string {

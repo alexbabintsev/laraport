@@ -1,4 +1,4 @@
-# laradok
+# laraport
 
 A terminal UI for managing Laravel applications running inside Docker containers — locally or on remote servers over SSH.
 
@@ -27,7 +27,7 @@ A terminal UI for managing Laravel applications running inside Docker containers
 - **Database management** — connect to any PostgreSQL, MySQL, MariaDB, Percona, or SQLite container, browse databases, run SQL queries, explore schema, maintenance queries, and download compressed dumps
 - **Redis inspection** — browse Redis `INFO`, key samples, config, and slowlog via curated `redis-cli` commands (auto-detects `REDIS_PASSWORD`)
 - **MongoDB inspection** — browse server/DB stats, collections, and indexes via curated `mongosh`/`mongo` commands (auto-detects root credentials)
-- **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laradok/sql_history.json`)
+- **SQL query history** — per-database persistent history with `↑↓` navigation (stored in `~/.config/laraport/sql_history.json`)
 
 ---
 
@@ -36,18 +36,18 @@ A terminal UI for managing Laravel applications running inside Docker containers
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew install alexbabintsev/tap/laradok
+brew install alexbabintsev/tap/laraport
 ```
 
-Upgrade later with `brew upgrade laradok`.
+Upgrade later with `brew upgrade laraport`.
 
 ### From source
 
 ```bash
-git clone https://github.com/alexbabintsev/laradok
-cd laradok
-go build -o laradok .
-mv laradok /usr/local/bin/
+git clone https://github.com/alexbabintsev/laraport
+cd laraport
+go build -o laraport .
+mv laraport /usr/local/bin/
 ```
 
 ### Requirements
@@ -60,19 +60,19 @@ mv laradok /usr/local/bin/
 
 ## Configuration
 
-Default config path: `~/.config/laradok/config.yaml`
+Default config path: `~/.config/laraport/config.yaml`
 
 Override with:
 ```bash
-laradok /path/to/config.yaml
+laraport /path/to/config.yaml
 # or
-LARADOK_CONFIG=/path/to/config.yaml laradok
+LARAPORT_CONFIG=/path/to/config.yaml laraport
 ```
 
 ### Minimal config (local Docker)
 
 ```yaml
-# No config needed — laradok auto-adds a local server if none are defined.
+# No config needed — laraport auto-adds a local server if none are defined.
 ```
 
 ### Managing servers and settings from the UI
@@ -88,7 +88,7 @@ Servers can be managed on the server list without editing YAML:
 
 The server form has `ctrl+t` to **test the connection** (connects and runs `docker version`) and `ctrl+s` to save. Without a config only the implicit **Local** server is shown; once you add a server, Local is written to the config too, so it stays (delete it if you don't want it). Deleting the last server brings the implicit Local back.
 
-Saving rewrites `config.yaml` (comments and formatting are not kept), so the **first** time laradok writes it, the original is kept as `config.yaml.bak`. The file is written atomically with mode `0600`. SSH key passphrases are not editable in the UI — load such keys into `ssh-agent` instead (an existing `passphrase:` in the file is preserved).
+Saving rewrites `config.yaml` (comments and formatting are not kept), so the **first** time laraport writes it, the original is kept as `config.yaml.bak`. The file is written atomically with mode `0600`. SSH key passphrases are not editable in the UI — load such keys into `ssh-agent` instead (an existing `passphrase:` in the file is preserved).
 
 ### Full config example
 
@@ -171,7 +171,7 @@ servers:
 | `key` | path | Private key; empty = ssh-agent / default keys |
 | `jump_host` | `[user@]host[:port]` | SSH bastion to connect through, like OpenSSH's `ProxyJump` / `ssh -J` (one hop). User defaults to the server's `user`, port to 22 |
 | `jump_key` | path | Key for the bastion; empty = the server's `key`, then ssh-agent / default keys |
-| `docker_cmd` | string | How to invoke Docker on that host, e.g. `sudo -n docker` when your user is not in the `docker` group (needs passwordless sudo for docker), `docker --context prod`, or `podman`. Every `docker` call laradok makes there — including Terminal and Docker Logs — goes through it. Default: `docker` |
+| `docker_cmd` | string | How to invoke Docker on that host, e.g. `sudo -n docker` when your user is not in the `docker` group (needs passwordless sudo for docker), `docker --context prod`, or `podman`. Every `docker` call laraport makes there — including Terminal and Docker Logs — goes through it. Default: `docker` |
 | `root_path` | path | Default app root for containers on this server that do not set their own `root_path` |
 
 ### Settings
@@ -188,7 +188,7 @@ servers:
 
 ### SSH authentication
 
-laradok tries auth methods in this order:
+laraport tries auth methods in this order:
 
 1. Explicit `key:` path from config (with optional `passphrase:`)
 2. `ssh-agent` (via `SSH_AUTH_SOCK`)
@@ -203,7 +203,7 @@ Server host keys are checked against `~/.ssh/known_hosts` (the same file OpenSSH
 
 ### Jump host (bastion)
 
-For servers that are only reachable through a bastion, set `jump_host` (in the server form or the config). laradok connects to the bastion, opens a tunnel from it to the server (a `direct-tcpip` channel, exactly what `ssh -J` does) and runs the SSH session to the server through that tunnel:
+For servers that are only reachable through a bastion, set `jump_host` (in the server form or the config). laraport connects to the bastion, opens a tunnel from it to the server (a `direct-tcpip` channel, exactly what `ssh -J` does) and runs the SSH session to the server through that tunnel:
 
 - both host keys are verified against `~/.ssh/known_hosts`, each under its own name, with the same `accept-new` / `strict` policy;
 - if the bastion or the tunnel drops, the whole chain is re-established on the next action;
@@ -219,8 +219,8 @@ A dropped connection (network change, laptop sleep, server restart) is detected 
 ## Usage
 
 ```bash
-laradok                         # use default config
-laradok ~/.config/laradok/config.yaml
+laraport                         # use default config
+laraport ~/.config/laraport/config.yaml
 ```
 
 ### Navigation
@@ -262,7 +262,7 @@ After selecting a container, the main menu offers:
 
 Menu items are detected automatically with a single `docker exec` probe when the container is opened. A spinner is shown during detection.
 
-**Terminal** suspends the TUI and attaches your real terminal to an interactive shell in the container, resuming laradok when you exit the shell (`exit` or `Ctrl+D`). For local servers it runs `docker exec -it`; for SSH servers it shells out to your system `ssh -t` using the server's host/port/key, so the same key/agent that works for `ssh` must be available.
+**Terminal** suspends the TUI and attaches your real terminal to an interactive shell in the container, resuming laraport when you exit the shell (`exit` or `Ctrl+D`). For local servers it runs `docker exec -it`; for SSH servers it shells out to your system `ssh -t` using the server's host/port/key, so the same key/agent that works for `ssh` must be available.
 
 ---
 
@@ -299,9 +299,9 @@ Select a container running PostgreSQL, MySQL, MariaDB, Percona Server, or SQLite
 
 MariaDB and Percona reuse the MySQL client, `information_schema`, and `mysqldump` (`mariadb` / `mariadb-dump` where the `mysql*` names are missing), so they share the same actions as MySQL — only the engine label differs.
 
-Passwords are never put on a command line (where any user on the host could read them with `ps`): laradok writes them to the command's stdin and the container-side shell exports them as `PGPASSWORD` / `MYSQL_PWD` / `REDISCLI_AUTH` just for that command.
+Passwords are never put on a command line (where any user on the host could read them with `ps`): laraport writes them to the command's stdin and the container-side shell exports them as `PGPASSWORD` / `MYSQL_PWD` / `REDISCLI_AUTH` just for that command.
 
-For **PostgreSQL**, laradok auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For the **MySQL family** (MySQL / MariaDB / Percona), it prefers `root` with `MYSQL_ROOT_PASSWORD` (or `MARIADB_ROOT_PASSWORD`), otherwise `MYSQL_USER` / `MYSQL_PASSWORD` (or the `MARIADB_*` equivalents). **SQLite** needs no credentials — laradok scans the app root (e.g. `database/`, `storage/`) for `*.sqlite`, `*.sqlite3`, and `*.db` files and lists each file as a database.
+For **PostgreSQL**, laraport auto-detects credentials from `POSTGRES_USER` / `POSTGRES_PASSWORD` (falling back to `postgres`). For the **MySQL family** (MySQL / MariaDB / Percona), it prefers `root` with `MYSQL_ROOT_PASSWORD` (or `MARIADB_ROOT_PASSWORD`), otherwise `MYSQL_USER` / `MYSQL_PASSWORD` (or the `MARIADB_*` equivalents). **SQLite** needs no credentials — laraport scans the app root (e.g. `database/`, `storage/`) for `*.sqlite`, `*.sqlite3`, and `*.db` files and lists each file as a database.
 
 System databases are hidden from the list (PostgreSQL: `postgres`, `template0`, `template1`; MySQL family: `information_schema`, `performance_schema`, `mysql`, `sys`).
 
@@ -366,7 +366,7 @@ SQLite is file-based, so its actions run against the selected `.sqlite` file via
 
 ### SQL query history
 
-- Stored per-database in `~/.config/laradok/sql_history.json`
+- Stored per-database in `~/.config/laraport/sql_history.json`
 - Key format: `serverName/containerName/dbName`
 - Up to 200 queries per database
 - `↑` / `↓` to navigate history in the SQL input screen
@@ -376,7 +376,7 @@ SQLite is file-based, so its actions run against the selected `.sqlite` file via
 
 ## Redis
 
-Select a container with the `redis-cli` client, then choose **Redis** from the main menu. laradok auto-detects the password from `REDIS_PASSWORD` (or the credentials in `REDIS_URL`) and runs every command as `redis-cli …` inside the container, passing the password through the `REDISCLI_AUTH` environment variable (not `-a`, which would expose it in process listings).
+Select a container with the `redis-cli` client, then choose **Redis** from the main menu. laraport auto-detects the password from `REDIS_PASSWORD` (or the credentials in `REDIS_URL`) and runs every command as `redis-cli …` inside the container, passing the password through the `REDISCLI_AUTH` environment variable (not `-a`, which would expose it in process listings).
 
 The screen offers curated, read-only commands grouped by purpose:
 
@@ -392,7 +392,7 @@ Key listing uses `redis-cli --scan` (non-blocking) rather than `KEYS *`, so it i
 
 ## MongoDB
 
-Select a container with the `mongosh` (preferred) or legacy `mongo` shell, then choose **MongoDB** from the main menu. laradok auto-detects root credentials from `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` (or the credentials in `MONGO_URL` / `MONGODB_URI`) and runs each command as `mongosh --quiet --eval '<js>'` inside the container. With `mongosh` the credentials are read from the environment by the script itself (`db.getSiblingDB('admin').auth(…)`), so they never appear on a command line; the legacy `mongo` shell cannot do that and falls back to `-u`/`-p`. `mongodump` gets its password from a private `--config` file that is removed afterwards.
+Select a container with the `mongosh` (preferred) or legacy `mongo` shell, then choose **MongoDB** from the main menu. laraport auto-detects root credentials from `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` (or the credentials in `MONGO_URL` / `MONGODB_URI`) and runs each command as `mongosh --quiet --eval '<js>'` inside the container. With `mongosh` the credentials are read from the environment by the script itself (`db.getSiblingDB('admin').auth(…)`), so they never appear on a command line; the legacy `mongo` shell cannot do that and falls back to `-u`/`-p`. `mongodump` gets its password from a private `--config` file that is removed afterwards.
 
 Commands are curated JavaScript expressions grouped by purpose:
 
@@ -409,7 +409,7 @@ When no `MONGO_INITDB_ROOT_*` variables are present, commands run without authen
 ## Architecture
 
 ```
-laradok/
+laraport/
 ├── main.go
 ├── internal/
 │   ├── config/          # YAML config loading, SSH key expansion, SQL history persistence
@@ -424,21 +424,21 @@ laradok/
 
 The `Runner` interface (`RunCommand`, `RunOutput`, `StreamCommand`, `InteractiveCommand`, `StartCommand`) is implemented by both `SSHClient` and `LocalClient` on top of one small transport primitive, making all features work identically on local and remote Docker hosts.
 
-Every command that runs inside a container is built by `docker.ExecShCmd` / `ExecStreamScript`: the script is passed to `sh -c` as one single-quoted word, so the host shell never expands anything in it, and every embedded value (paths, DB names) is quoted individually. Streams that can be cancelled run as a background job inside the container that is terminated when laradok closes its stdin, so leaving a screen really stops `tail -f`, a long query or a dump on the server.
+Every command that runs inside a container is built by `docker.ExecShCmd` / `ExecStreamScript`: the script is passed to `sh -c` as one single-quoted word, so the host shell never expands anything in it, and every embedded value (paths, DB names) is quoted individually. Streams that can be cancelled run as a background job inside the container that is terminated when laraport closes its stdin, so leaving a screen really stops `tail -f`, a long query or a dump on the server.
 
 ---
 
 ## Development
 
 ```bash
-go build -o laradok .
+go build -o laraport .
 go test -race ./...                                  # unit tests (hermetic)
-LARADOK_INTEGRATION=1 go test -race ./internal/docker/  # + real Docker containers
+LARAPORT_INTEGRATION=1 go test -race ./internal/docker/  # + real Docker containers
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
 
 - **Unit tests** need no Docker or network: the SSH layer is tested against an in-process SSH server (reconnects, dropped connections, host-key checks, complete stdout/stderr), and command builders run against a fake `docker` CLI that executes scripts with the real `sh`.
-- **Integration tests** start throwaway containers (labelled `laradok-test`) for busybox, dash and bash shells, PostgreSQL, MariaDB, Redis and MongoDB, using hostile file names and passwords to verify quoting, cancellation and that secrets never appear in process listings.
+- **Integration tests** start throwaway containers (labelled `laraport-test`) for busybox, dash and bash shells, PostgreSQL, MariaDB, Redis and MongoDB, using hostile file names and passwords to verify quoting, cancellation and that secrets never appear in process listings.
 - CI (`.github/workflows/test.yml`) runs gofmt, vet, the race-enabled unit tests on Linux and macOS, the integration tests and `govulncheck`; releases run the tests and `govulncheck` before publishing.
 
 ---
@@ -469,7 +469,7 @@ Available from the main menu on **any** container, rooted at the filesystem root
 
 - No telemetry or network calls except to your configured servers
 - SSH credentials stay local; only Docker and psql commands are executed on remote hosts
-- SQL history is stored unencrypted (mode `0600`) at `~/.config/laradok/sql_history.json`
+- SQL history is stored unencrypted (mode `0600`) at `~/.config/laraport/sql_history.json`
 - Dump files are written to `~/Downloads/` with mode `0600` and never transmitted elsewhere
 - `config.yaml` is rewritten with mode `0600` when edited from the UI, since it may contain key passphrases
 - Database passwords are passed to the container over stdin, never as command-line arguments

@@ -1,7 +1,7 @@
-# laradok configuration
-# Place this file at ~/.config/laradok/config.yaml
-# or pass its path as the first argument: laradok /path/to/config.yaml
-# or set LARADOK_CONFIG=/path/to/config.yaml
+# laraport configuration
+# Place this file at ~/.config/laraport/config.yaml
+# or pass its path as the first argument: laraport /path/to/config.yaml
+# or set LARAPORT_CONFIG=/path/to/config.yaml
 #
 # Servers and settings can also be edited from the UI: on the server list press
 # a (add), e (edit), d (delete) or s (settings).

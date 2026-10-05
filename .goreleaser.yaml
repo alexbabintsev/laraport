@@ -1,4 +1,4 @@
-# GoReleaser config for laradok.
+# GoReleaser config for laraport.
 # Docs: https://goreleaser.com
 #
 # Release flow:
@@ -6,23 +6,23 @@
 #   2. GitHub Actions runs `goreleaser release`, which:
 #      - cross-compiles macOS/Linux (arm64 + amd64) binaries
 #      - publishes a GitHub Release with .tar.gz archives + checksums
-#      - commits an updated Formula/laradok.rb into alexbabintsev/homebrew-tap
+#      - commits an updated Formula/laraport.rb into alexbabintsev/homebrew-tap
 #
 # Then users install with:
-#   brew install alexbabintsev/tap/laradok
+#   brew install alexbabintsev/tap/laraport
 
 version: 2
 
-project_name: laradok
+project_name: laraport
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: laradok
+  - id: laraport
     main: .
-    binary: laradok
+    binary: laraport
     env:
       - CGO_ENABLED=0
     goos:
@@ -36,7 +36,7 @@ builds:
       - -s -w -X main.version={{ .Version }}
 
 archives:
-  - id: laradok
+  - id: laraport
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
@@ -64,22 +64,22 @@ changelog:
 # access to the alexbabintsev/homebrew-tap repository (set in CI secrets).
 #
 # NOTE: GoReleaser deprecated `brews:` in favour of `homebrew_casks:`. We keep
-# the classic formula here on purpose: a cask would install laradok as an
+# the classic formula here on purpose: a cask would install laraport as an
 # unsigned macOS app bundle and force a `xattr -dr com.apple.quarantine` hook,
 # whereas a plain `bin.install` formula just drops the binary on PATH with no
 # code-signing/notarisation needed. Revisit casks once the binary is signed.
 brews:
-  - name: laradok
+  - name: laraport
     repository:
       owner: alexbabintsev
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: "https://laradok.babintsev.com"
+    homepage: "https://github.com/alexbabintsev/laraport"
     description: "A terminal UI for managing Laravel apps inside Docker, locally or over SSH"
     license: "MIT"
     # The bottle is just a single binary, so the test simply checks --version.
     test: |
-      assert_match version.to_s, shell_output("#{bin}/laradok --version")
+      assert_match version.to_s, shell_output("#{bin}/laraport --version")
     install: |
-      bin.install "laradok"
+      bin.install "laraport"

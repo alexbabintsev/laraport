@@ -147,7 +147,7 @@ type processStream interface {
 // and renames it to a unique name based on fileName. Returns the final path
 // and the number of bytes written.
 func receive(p processStream, dir, fileName string, filter filterFunc, emit func(string) bool) (string, int64, error) {
-	tmp, err := os.CreateTemp(dir, ".laradok-*.part") // mode 0600
+	tmp, err := os.CreateTemp(dir, ".laraport-*.part") // mode 0600
 	if err != nil {
 		p.Stop()
 		return "", 0, fmt.Errorf("creating file: %w", err)

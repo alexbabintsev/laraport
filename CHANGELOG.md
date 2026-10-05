@@ -1,19 +1,19 @@
 # Changelog
 
-All notable changes to laradok are documented here.
+All notable changes to laraport are documented here.
 
 ---
 
 ## [Unreleased]
 
 ### Added
-- **Jump host (bastion) support** — `jump_host: "[user@]host[:port]"` (and optional `jump_key`) on a server, also editable in the server form. laradok connects to the bastion, tunnels to the server over a `direct-tcpip` channel (like `ssh -J`) and verifies both host keys with the configured policy; a dropped bastion or tunnel is re-established on the next action. Terminal goes through the bastion too (`ssh -J`, or a `ProxyCommand` with `-i` when a bastion key is set). The server list shows "via <bastion>"
+- **Jump host (bastion) support** — `jump_host: "[user@]host[:port]"` (and optional `jump_key`) on a server, also editable in the server form. laraport connects to the bastion, tunnels to the server over a `direct-tcpip` channel (like `ssh -J`) and verifies both host keys with the configured policy; a dropped bastion or tunnel is re-established on the next action. Terminal goes through the bastion too (`ssh -J`, or a `ProxyCommand` with `-i` when a bastion key is set). The server list shows "via <bastion>"
 - **Server management in the UI** — on the server list: `a` add, `e` edit, `d` delete (with confirmation, naming the container settings removed with it). The form validates input (unique name, host/user for SSH, port range, key file exists) and `ctrl+t` tests the connection (`docker version`). Adding a server keeps the implicit Local server in the config; deleting the last server brings it back
 - **Per-server `docker_cmd`** — e.g. `sudo -n docker` for users outside the `docker` group, `docker --context …` or `podman`. Applied to every Docker call on that server, including Terminal and Docker Logs, via a shell function in front of each host command, so data inside containers or quoted arguments is never rewritten
 - **Per-server `root_path`** — default app root for containers without their own
 - **Settings screen** (`s` on the server list) and `settings:` block in the config — downloads folder, SSH host key policy (`accept-new` / `strict`), default line wrapping, show/hide stopped containers, Stats refresh interval, SQL history on/off and size, plus a button to clear SQL history
 - **`host_key_check: strict`** — refuses servers not already in `~/.ssh/known_hosts`; the error shows the key fingerprint and the `ssh-keyscan` command to add it
-- The first time laradok rewrites `config.yaml` it keeps the original as `config.yaml.bak` (comments are not preserved by rewrites)
+- The first time laraport rewrites `config.yaml` it keeps the original as `config.yaml.bak` (comments are not preserved by rewrites)
 - **Test suite and CI** — unit tests for every package (in-process SSH server, fake `docker` CLI, TUI orchestration and screens) plus Docker integration tests across busybox/dash/bash shells and PostgreSQL, MariaDB, Redis and MongoDB; GitHub Actions runs them with the race detector on Linux and macOS together with `govulncheck`, and releases are gated on them
 - **Edit container config from the UI** — press `e` on a container in the list to open a form for its display name, root path, favorite and hidden flags
   - Saves back to `config.yaml` (`Config.Save`), creating an exact-name entry that takes precedence over any glob rule
@@ -65,6 +65,7 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- **Renamed laradok → laraport** to avoid confusion with the well-known Laradock project: binary `laraport`, Go module `github.com/alexbabintsev/laraport`, Homebrew formula `alexbabintsev/tap/laraport`, config directory `~/.config/laraport/`, environment variable `LARAPORT_CONFIG`
 - README feature list covers server management, bastion, per-server docker command, settings and Terminal
 - Stats network/disk rates are computed over the time actually elapsed between samples, so they stay correct with any refresh interval
 - **Log viewer reads by byte offset** — opening a log reads the last 256 KB with a seek (`dd skip`) and follows from that exact offset (`tail -c +N -f`); scrolling up loads the 256 KB before the earliest loaded byte. Previously opening counted every line (`wc -l`) and each scroll-back chunk was read with `sed -n 'a,bp'`, which scans the file from the start — both grew with the file size. Opening and paging a 1 GB log now takes the same ~0.2 s as a 1 MB one. The status bar shows `position / size  percent` in bytes
@@ -77,7 +78,7 @@ All notable changes to laradok are documented here.
 - **Commands run in the app root** — custom commands (config `commands:`) and the Artisan/Composer/Npm pickers now `cd` into the container's app root (configured or detected) before running, falling back to the image `WORKDIR` when it does not exist
 - **Log file list in one round-trip** — size, timestamps and line counts are gathered by a single in-container script instead of two
 - **Faster container list** — `docker ps` is no longer always run twice; it is retried only when the output looks truncated. Fields are emitted with `{{json …}}`, so names/statuses containing quotes no longer drop the container
-- **Laravel detection** — the capability probe now also looks for `artisan` (and `composer.phar`) in `/app`, not just the configured root / `/var/www/html`. When `artisan` is found at `/app` and no `root_path` is set in config, laradok adopts that root so artisan, logs and storage commands target the right directory.
+- **Laravel detection** — the capability probe now also looks for `artisan` (and `composer.phar`) in `/app`, not just the configured root / `/var/www/html`. When `artisan` is found at `/app` and no `root_path` is set in config, laraport adopts that root so artisan, logs and storage commands target the right directory.
 - **Download progress** — archive downloads (File Browser + Download Storage) now show a single `received N MB` counter that updates in place instead of flooding the output with one line per chunk
 - **PostgreSQL management** — full database browser accessible from the main menu
   - Auto-detects `POSTGRES_USER` / `POSTGRES_PASSWORD` from container environment
@@ -88,7 +89,7 @@ All notable changes to laradok are documented here.
 - **Index queries** — unused indexes, duplicate indexes, index usage statistics
 - **Maintenance queries** — table bloat / dead tuples, active locks, replication status, VACUUM ANALYZE
 - **SQL query input screen** — freeform SQL with `↑↓` history navigation
-- **Persistent SQL history** — stored per-database in `~/.config/laradok/sql_history.json`, key `serverName/containerName/dbName`, up to 200 entries, deduplicated
+- **Persistent SQL history** — stored per-database in `~/.config/laraport/sql_history.json`, key `serverName/containerName/dbName`, up to 200 entries, deduplicated
 - **Database dump download** — two formats available:
   - **SQL dump** — `pg_dump --no-owner --no-acl | gzip` → `~/Downloads/<db>_<timestamp>.sql.gz`; `\restrict` and `\unrestrict` lines stripped after decompression
   - **SQL dump (inserts)** — same but with `--inserts --column-inserts` (slower, more portable INSERT-based format)
@@ -112,7 +113,7 @@ All notable changes to laradok are documented here.
 - **Incomplete / corrupted output from remote servers** (container list missing entries, partial database lists, stray NUL bytes) — the SSH runner wrote stdout and stderr into one unsynchronised `bytes.Buffer` from two goroutines; whenever the remote side printed anything on stderr (shell rc files, CLI warnings) the buffer was corrupted. Output is now collected safely, and parsed commands read stdout only, so stderr noise cannot leak into lists. The retry-on-empty / NUL-stripping workarounds are gone
 - **Dropped SSH connections are re-established** — after a network change, sleep or server restart the next action reconnects transparently instead of failing until the app is restarted. Dead connections are detected via keepalives (every 30 s) and a 10 s limit on opening a session; connecting and the SSH handshake time out after 15 s
 - **UI freeze after leaving running commands** — output streams were started synchronously inside the UI loop and their stop function was discarded, so leaving an artisan/SQL/dump screen early leaked an SSH session slot; after six such exits the whole UI hung. Every stream now starts in the background and is stopped when its screen closes, and waiting for a session slot times out after 30 s
-- **Leaving a screen now stops the command on the server** — cancelled streams (tail, `docker logs`, artisan, SQL, dumps) run as a background job inside the container that is killed when laradok closes stdin; previously closing a remote `docker exec` left e.g. `queue:work` or `tail -f` running in the container
+- **Leaving a screen now stops the command on the server** — cancelled streams (tail, `docker logs`, artisan, SQL, dumps) run as a background job inside the container that is killed when laraport closes stdin; previously closing a remote `docker exec` left e.g. `queue:work` or `tail -f` running in the container
 - **Log tail no longer drops lines** appended between counting the file and starting to follow it (`tail -n +<N+1> -f`)
 - **Storage download failed on live Laravel apps** — tar's "file changed as we read it" went into the data stream and broke decoding; it is now reported as a warning and the archive is kept
 - **Large downloads no longer load into memory** — dumps and archives were collected as base64 text, then decoded (≈4× the file size in RAM). They now stream raw bytes straight to a private temp file that is renamed into place only on success; failed or cancelled downloads leave nothing behind, and existing files are never overwritten

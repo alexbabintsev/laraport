@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/msgs"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -104,10 +104,10 @@ func TestServerEditValidationAndLocal(t *testing.T) {
 
 func TestServerEditExistingAndTest(t *testing.T) {
 	home := homeDir()
-	keyPath := filepath.Join(home, ".ssh", "laradok-test-key")
+	keyPath := filepath.Join(home, ".ssh", "laraport-test-key")
 	srv := config.Server{Name: "prod", Type: config.ServerTypeSSH, Host: "h", Port: 2222, User: "u", Key: keyPath, RootPath: "/app"}
 	s := NewServerEditScreen("prod", srv, w, 60)
-	if v := s.View(); !strings.Contains(v, "Edit server — prod") || !strings.Contains(v, "2222") || !strings.Contains(v, "~/.ssh/laradok-test-key") {
+	if v := s.View(); !strings.Contains(v, "Edit server — prod") || !strings.Contains(v, "2222") || !strings.Contains(v, "~/.ssh/laraport-test-key") {
 		t.Fatalf("existing values not shown:\n%s", v)
 	}
 	// Test connection needs a valid server: the key file must exist.

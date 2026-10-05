@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexbabintsev/laradok/internal/connection"
+	"github.com/alexbabintsev/laraport/internal/connection"
 )
 
 // fakeProcess is a processStream over fixed data.

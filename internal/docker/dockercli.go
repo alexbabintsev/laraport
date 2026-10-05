@@ -3,7 +3,7 @@ package docker
 import (
 	"strings"
 
-	"github.com/alexbabintsev/laradok/internal/connection"
+	"github.com/alexbabintsev/laraport/internal/connection"
 )
 
 // DefaultDockerCLI is the docker invocation used when a server sets none.

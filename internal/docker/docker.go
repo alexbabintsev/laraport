@@ -3,7 +3,7 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/alexbabintsev/laradok/internal/connection"
+	"github.com/alexbabintsev/laraport/internal/connection"
 	"strconv"
 	"strings"
 	"time"

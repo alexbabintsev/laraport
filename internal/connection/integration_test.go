@@ -3,7 +3,7 @@ package connection
 // Integration test against real OpenSSH servers in Docker: a bastion with a
 // published port, and a target reachable only from the bastion's network.
 //
-// Run with: LARADOK_INTEGRATION=1 go test ./internal/connection/
+// Run with: LARAPORT_INTEGRATION=1 go test ./internal/connection/
 
 import (
 	"crypto/ed25519"
@@ -24,8 +24,8 @@ import (
 
 func requireDocker(t *testing.T) {
 	t.Helper()
-	if os.Getenv("LARADOK_INTEGRATION") != "1" {
-		t.Skip("set LARADOK_INTEGRATION=1 to run Docker integration tests")
+	if os.Getenv("LARAPORT_INTEGRATION") != "1" {
+		t.Skip("set LARAPORT_INTEGRATION=1 to run Docker integration tests")
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skipf("docker not available: %v", err)
@@ -63,12 +63,12 @@ func TestIntegrationRealOpenSSHJumpHost(t *testing.T) {
 	os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600)
 	pubLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
 
-	network := fmt.Sprintf("laradok-test-%d", time.Now().UnixNano())
-	docker(t, "network", "create", "--label", "laradok-test=1", network)
+	network := fmt.Sprintf("laraport-test-%d", time.Now().UnixNano())
+	docker(t, "network", "create", "--label", "laraport-test=1", network)
 	t.Cleanup(func() { exec.Command("docker", "network", "rm", network).Run() }) //nolint:errcheck
 
 	run := func(name string, publish bool) string {
-		args := []string{"run", "-d", "--label", "laradok-test=1", "--network", network, "--network-alias", name, "-e", "PUBKEY=" + pubLine}
+		args := []string{"run", "-d", "--label", "laraport-test=1", "--network", network, "--network-alias", name, "-e", "PUBKEY=" + pubLine}
 		if publish {
 			args = append(args, "-p", "127.0.0.1::22")
 		}

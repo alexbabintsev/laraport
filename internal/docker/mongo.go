@@ -27,15 +27,15 @@ func DetectMongoCredentials(r Runner, containerID string) (user, password string
 	return user, password, nil
 }
 
-// mongoSecrets passes the credentials via stdin as LARADOK_MONGO_USER /
-// LARADOK_MONGO_PASS.
+// mongoSecrets passes the credentials via stdin as LARAPORT_MONGO_USER /
+// LARAPORT_MONGO_PASS.
 func mongoSecrets(user, password string) []Secret {
 	if user == "" {
 		return nil
 	}
 	return []Secret{
-		{Name: "LARADOK_MONGO_USER", Value: user},
-		{Name: "LARADOK_MONGO_PASS", Value: password},
+		{Name: "LARAPORT_MONGO_USER", Value: user},
+		{Name: "LARAPORT_MONGO_PASS", Value: password},
 	}
 }
 
@@ -55,10 +55,10 @@ func MongoEvalCmd(containerID, mongoBin, user, password, dbName, js string) Host
 	}
 	b.WriteString(" --quiet")
 	if user != "" && mongoBin == "mongo" {
-		b.WriteString(` -u "$LARADOK_MONGO_USER" -p "$LARADOK_MONGO_PASS" --authenticationDatabase admin`)
+		b.WriteString(` -u "$LARAPORT_MONGO_USER" -p "$LARAPORT_MONGO_PASS" --authenticationDatabase admin`)
 	}
 	if user != "" && mongoBin != "mongo" {
-		js = `db.getSiblingDB('admin').auth(process.env.LARADOK_MONGO_USER, process.env.LARADOK_MONGO_PASS); ` + js
+		js = `db.getSiblingDB('admin').auth(process.env.LARAPORT_MONGO_USER, process.env.LARAPORT_MONGO_PASS); ` + js
 	}
 	b.WriteString(" --eval " + shellQuote(js))
 	return ExecStreamScript(containerID, b.String(), mongoSecrets(user, password)...)
@@ -78,9 +78,9 @@ func DumpMongo(r Runner, containerID, user, password string) (<-chan string, fun
 	script := "mongodump --archive --gzip"
 	var secrets []Secret
 	if user != "" {
-		secrets = []Secret{{Name: "LARADOK_MONGO_CFG", Value: "password: " + yamlQuote(password)}}
+		secrets = []Secret{{Name: "LARAPORT_MONGO_CFG", Value: "password: " + yamlQuote(password)}}
 		script = `umask 077; f=$(mktemp) || exit 1; trap 'rm -f "$f"' EXIT; trap 'exit 143' TERM; ` +
-			`printf '%s\n' "$LARADOK_MONGO_CFG" > "$f"; ` +
+			`printf '%s\n' "$LARAPORT_MONGO_CFG" > "$f"; ` +
 			"mongodump --config \"$f\" -u " + shellQuote(user) + " --authenticationDatabase admin --archive --gzip"
 	}
 	hc := ExecStreamScript(containerID, script, secrets...)

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/screens"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/screens"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -181,7 +181,7 @@ func TestServerRootPathDefault(t *testing.T) {
 func TestTestConnectionLocal(t *testing.T) {
 	app, _ := newConfigApp(t)
 	// A docker CLI that is certainly missing: the test reports an error.
-	_, cmd := app.Update(msgs.TestConnectionMsg{Server: config.Server{Name: "l", Type: config.ServerTypeLocal, DockerCmd: "laradok-no-such-docker"}})
+	_, cmd := app.Update(msgs.TestConnectionMsg{Server: config.Server{Name: "l", Type: config.ServerTypeLocal, DockerCmd: "laraport-no-such-docker"}})
 	got := collect[msgs.ConnectionTestedMsg](cmd)
 	if len(got) != 1 || got[0].Err == nil {
 		t.Fatalf("got %+v", got)

@@ -5,8 +5,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/tui"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -26,20 +26,20 @@ func run(args []string, stdout, stderr io.Writer, startTUI func(*config.Config, 
 	if len(args) > 0 {
 		switch args[0] {
 		case "-v", "--version", "version":
-			fmt.Fprintf(stdout, "laradok %s\n", version)
+			fmt.Fprintf(stdout, "laraport %s\n", version)
 			return 0
 		case "-h", "--help", "help":
-			fmt.Fprintf(stdout, "laradok %s - a terminal UI for Laravel apps in Docker\n\n", version)
+			fmt.Fprintf(stdout, "laraport %s - a terminal UI for Laravel apps in Docker\n\n", version)
 			fmt.Fprintln(stdout, "Usage:")
-			fmt.Fprintln(stdout, "  laradok [config.yaml]   Launch the TUI (defaults to ~/.config/laradok/config.yaml)")
-			fmt.Fprintln(stdout, "  laradok --version       Print the version")
-			fmt.Fprintln(stdout, "  laradok --help          Show this help")
+			fmt.Fprintln(stdout, "  laraport [config.yaml]   Launch the TUI (defaults to ~/.config/laraport/config.yaml)")
+			fmt.Fprintln(stdout, "  laraport --version       Print the version")
+			fmt.Fprintln(stdout, "  laraport --help          Show this help")
 			return 0
 		}
 	}
 
 	// Determine config path: arg > env > default
-	cfgPath := os.Getenv("LARADOK_CONFIG")
+	cfgPath := os.Getenv("LARAPORT_CONFIG")
 	if cfgPath == "" {
 		cfgPath = config.DefaultConfigPath()
 	}
@@ -53,7 +53,7 @@ func run(args []string, stdout, stderr io.Writer, startTUI func(*config.Config, 
 		return 1
 	}
 	if err := startTUI(cfg, cfgPath); err != nil {
-		fmt.Fprintf(stderr, "Error running laradok: %v\n", err)
+		fmt.Fprintf(stderr, "Error running laraport: %v\n", err)
 		return 1
 	}
 	return 0

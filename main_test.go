@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alexbabintsev/laradok/internal/config"
+	"github.com/alexbabintsev/laraport/internal/config"
 )
 
 func noTUI(t *testing.T) func(*config.Config, string) error {
@@ -21,7 +21,7 @@ func noTUI(t *testing.T) func(*config.Config, string) error {
 func TestVersionAndHelp(t *testing.T) {
 	for _, arg := range []string{"-v", "--version", "version"} {
 		var out bytes.Buffer
-		if code := run([]string{arg}, &out, &out, noTUI(t)); code != 0 || out.String() != "laradok dev\n" {
+		if code := run([]string{arg}, &out, &out, noTUI(t)); code != 0 || out.String() != "laraport dev\n" {
 			t.Errorf("%s: code %d out %q", arg, code, out.String())
 		}
 	}
@@ -48,12 +48,12 @@ func TestConfigPathResolution(t *testing.T) {
 	}
 	var out bytes.Buffer
 
-	t.Setenv("LARADOK_CONFIG", "")
+	t.Setenv("LARAPORT_CONFIG", "")
 	run(nil, &out, &out, capture)
-	if gotPath != filepath.Join(home, ".config", "laradok", "config.yaml") || gotServer != "Local" {
+	if gotPath != filepath.Join(home, ".config", "laraport", "config.yaml") || gotServer != "Local" {
 		t.Errorf("default: %q %q", gotPath, gotServer)
 	}
-	t.Setenv("LARADOK_CONFIG", envCfg)
+	t.Setenv("LARAPORT_CONFIG", envCfg)
 	run(nil, &out, &out, capture)
 	if gotPath != envCfg || gotServer != "fromenv" {
 		t.Errorf("env: %q %q", gotPath, gotServer)

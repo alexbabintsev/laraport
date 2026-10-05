@@ -3,9 +3,9 @@ package screens
 import (
 	"strconv"
 
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/msgs"
-	"github.com/alexbabintsev/laradok/internal/tui/styles"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/msgs"
+	"github.com/alexbabintsev/laraport/internal/tui/styles"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -44,7 +44,7 @@ func NewSettingsScreen(st config.Settings, width, height int) *SettingsScreen {
 	s.form.text("stats_interval", "Stats refresh (s)", intText(st.StatsInterval), strconv.Itoa(config.DefaultStatsInterval),
 		"seconds between Stats screen samples (1–60)")
 	s.form.toggle("sql_history", "Save SQL history", !st.NoSQLHistory,
-		"remember queries per database in ~/.config/laradok/sql_history.json")
+		"remember queries per database in ~/.config/laraport/sql_history.json")
 	s.form.text("sql_history_size", "SQL history size", intText(st.SQLHistorySize), strconv.Itoa(config.DefaultSQLHistorySize),
 		"queries kept per database").visible = func(f *form) bool { return f.isOn("sql_history") }
 	s.form.button("clear_history", "Clear SQL history", "delete all saved queries now",

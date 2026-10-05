@@ -1,8 +1,8 @@
 package msgs
 
 import (
-	"github.com/alexbabintsev/laradok/internal/config"
-	"github.com/alexbabintsev/laradok/internal/docker"
+	"github.com/alexbabintsev/laraport/internal/config"
+	"github.com/alexbabintsev/laraport/internal/docker"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

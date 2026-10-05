@@ -142,7 +142,7 @@ func DefaultConfigPath() string {
 	if err != nil {
 		return "config.yaml"
 	}
-	return filepath.Join(home, ".config", "laradok", "config.yaml")
+	return filepath.Join(home, ".config", "laraport", "config.yaml")
 }
 
 // Save writes the config back to disk as YAML. It re-collapses absolute SSH key
@@ -183,7 +183,7 @@ func (c *Config) Save(path string) error {
 }
 
 // backupOnce copies an existing config to <path>.bak (mode 0600) the first
-// time laradok rewrites it, since Save drops comments and formatting. An
+// time laraport rewrites it, since Save drops comments and formatting. An
 // existing backup is never overwritten.
 func backupOnce(path string) error {
 	if target, err := filepath.EvalSymlinks(path); err == nil {
