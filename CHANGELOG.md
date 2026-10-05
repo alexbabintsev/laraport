@@ -65,6 +65,7 @@ All notable changes to laradok are documented here.
   - Press `d` to archive and download any file or directory to `~/Downloads/<container>_<name>_<timestamp>.tar.gz` via streamed `tar | base64` (no temp files left on the server)
 
 ### Changed
+- README feature list covers server management, bastion, per-server docker command, settings and Terminal
 - Stats network/disk rates are computed over the time actually elapsed between samples, so they stay correct with any refresh interval
 - **Log viewer reads by byte offset** — opening a log reads the last 256 KB with a seek (`dd skip`) and follows from that exact offset (`tail -c +N -f`); scrolling up loads the 256 KB before the earliest loaded byte. Previously opening counted every line (`wc -l`) and each scroll-back chunk was read with `sed -n 'a,bp'`, which scans the file from the start — both grew with the file size. Opening and paging a 1 GB log now takes the same ~0.2 s as a 1 MB one. The status bar shows `position / size  percent` in bytes
 - **Log pickers list instantly** — files are listed from metadata only (size, dates); line counts are computed in the background and filled in as each finishes, and counting stops when you leave the picker

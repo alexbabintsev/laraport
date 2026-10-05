@@ -9,7 +9,12 @@ A terminal UI for managing Laravel applications running inside Docker containers
 
 ## Features
 
-- **Multi-server support** — connect to any number of SSH servers or use your local Docker socket
+- **Multi-server support** — connect to any number of SSH servers or use your local Docker socket; dropped connections reconnect automatically
+- **Server management in the UI** — add, edit and delete servers from the server list (`a` / `e` / `d`) with input validation and a connection test; changes are written to `config.yaml`
+- **Jump host (bastion)** — reach servers through an SSH bastion, like `ssh -J` (see [Jump host](#jump-host-bastion))
+- **Custom docker command per server** — e.g. `sudo -n docker` when your user is not in the `docker` group, or `podman`
+- **Settings** — downloads folder, SSH host key policy, line wrapping, stopped containers, Stats refresh, SQL history (`s` on the server list)
+- **Terminal** — open an interactive shell inside a container (full PTY), also through a bastion
 - **Container browser** — lists all Docker containers (running and stopped) with favorites, custom display names, filtering, and per-container status, published ports, and live CPU/memory usage; press `e` to edit a container's config (display name, root path, favorite, hidden) and write it back to `config.yaml`
 - **Artisan commands** — full autocomplete list of all `php artisan` commands with descriptions
 - **Composer commands** — browse and run composer scripts; auto-downloads `composer.phar` if not installed
