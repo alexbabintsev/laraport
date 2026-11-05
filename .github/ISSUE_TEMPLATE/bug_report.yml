@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Remove passwords, tokens and real addresses from anything you paste here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce it
+      placeholder: |
+        1. Open a container
+        2. Press l
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: laraport version
+      description: The output of `laraport --version`.
+      placeholder: laraport 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Your computer and terminal
+      placeholder: macOS 15, iTerm2
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where the app runs
+      options:
+        - Local Docker
+        - Plain Docker over SSH
+        - Docker Compose over SSH
+        - Docker Swarm over SSH
+        - Dokploy
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Error text, a screenshot, your Laravel or Docker version, the relevant part of the config.

@@ -1,0 +1,21 @@
+laraport license agreement
+
+Copyright (c) 2026 Alex Babintsev. All rights reserved.
+
+1. Free use. You may use laraport at no charge, for any purpose, with local
+   Docker and with one SSH server.
+
+2. Paid use. Using laraport with more SSH servers requires a license key. A
+   key is for one person. It covers every version released until the updates
+   date in the key, and those versions keep working after that date.
+
+3. Restrictions. You may not remove, disable or get around the license check,
+   share your key, or resell or redistribute laraport. Reverse engineering is
+   not allowed, except where the law permits it regardless of this agreement.
+
+4. Refunds and payment. Purchases are handled by Paddle, the merchant of
+   record. Refunds follow the policy published at https://laraport.app.
+
+5. No warranty. laraport is provided "as is", without warranty of any kind.
+   You are responsible for what you run on your servers. To the extent the law
+   allows, the author is not liable for any damages arising from its use.

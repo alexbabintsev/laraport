@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/alexbabintsev/laraport/discussions
+    about: How to do something, or something you would like to talk over first
+  - name: Security vulnerability
+    url: https://github.com/alexbabintsev/laraport/security/advisories/new
+    about: Report it privately, not in an issue
+  - name: Documentation
+    url: https://laraport.app/docs/
+    about: Installation, configuration and every screen
