@@ -6,6 +6,10 @@ All notable changes to laraport are documented here.
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] - 2026-11-05
+
 ### Added
 - License keys. Without one laraport works with local Docker and one SSH server, the first in the config; a key adds all the others. Other servers stay in the config, are marked LICENSE on the home screen and open the License screen. Keys are checked offline, so nothing is sent anywhere.
 - `laraport license [key]`, and License in the settings and the palette.
