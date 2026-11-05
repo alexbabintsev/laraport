@@ -8,6 +8,20 @@ All notable changes to laraport are documented here.
 
 ---
 
+## [0.3.1] - 2026-11-05
+
+### Added
+- The home screen says FREE or LICENSED next to the version, and l opens the License screen.
+
+### Changed
+- The recent containers on the home screen are a list below the servers: move down to one and press enter to open it.
+
+### Fixed
+- The License screen no longer shows the key field once a license is active; r opens it to replace the key.
+- Releases get their notes from CHANGELOG.md: 0.3.0 was published without them.
+
+---
+
 ## [0.3.0] - 2026-11-05
 
 ### Added

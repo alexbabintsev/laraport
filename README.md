@@ -164,7 +164,7 @@ Every option: [laraport.app/docs/configuration](https://laraport.app/docs/config
 
 ## License key
 
-Without a license laraport works with local Docker and one SSH server: the first in your config. A license adds all your other servers. Get one at [laraport.app/pricing](https://laraport.app/pricing/), then paste the key under License in the settings, or run:
+Without a license laraport works with local Docker and one SSH server: the first in your config. A license adds all your other servers. Get one at [laraport.app/pricing](https://laraport.app/pricing/), then press `l` on the home screen and paste the key, or run:
 
 ```bash
 laraport license <key>
