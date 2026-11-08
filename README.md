@@ -81,7 +81,7 @@ Every route from `route:list --json` with its method, URI, name, controller and 
 
 ### And more
 
-- **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config.
+- **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config. `ctrl+t` runs the command in the terminal instead, for commands that ask questions (`make:filament-user`, Laravel Prompts).
 - **Schedule and Environment**: the app's scheduled tasks with their next run (`t` runs one now through `schedule:test`, after a confirmation); the environment of Dokploy apps whose `.env` lives in the container's variables.
 - **Shell**: an interactive terminal in any container (full PTY), also through a bastion.
 - **Server resources**: images, volumes and networks with sizes and the containers using them, an update check against the registries, prune with the exact command in front of you.

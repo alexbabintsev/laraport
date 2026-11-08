@@ -8,6 +8,13 @@ All notable changes to laraport are documented here.
 
 ---
 
+## [0.3.2] - 2026-11-08
+
+### Added
+- Artisan, Composer and npm commands: `ctrl+t` (or `alt+enter`) runs the command in the terminal, so commands that ask questions work (`make:filament-user` failed with "Required."). The output stays until enter, and the journal keeps the exit status.
+
+---
+
 ## [0.3.1] - 2026-11-05
 
 ### Added
