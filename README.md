@@ -81,7 +81,7 @@ Every route from `route:list --json` with its method, URI, name, controller and 
 
 ### And more
 
-- **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config. `ctrl+t` runs the command in the terminal instead, for commands that ask questions (`make:filament-user`, Laravel Prompts).
+- **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config. `ctrl+t` runs the command in the terminal instead, for commands that ask questions (`make:filament-user`, Laravel Prompts). The commands you run are remembered per container: they are listed under *recent* on top, ready to run again with ↓ and enter or to edit first; `ctrl+d` forgets one.
 - **Schedule and Environment**: the app's scheduled tasks with their next run (`t` runs one now through `schedule:test`, after a confirmation); the environment of Dokploy apps whose `.env` lives in the container's variables.
 - **Shell**: an interactive terminal in any container (full PTY), also through a bastion.
 - **Server resources**: images, volumes and networks with sizes and the containers using them, an update check against the registries, prune with the exact command in front of you.
@@ -178,7 +178,7 @@ Keys are checked on your computer, so nothing is sent anywhere. Versions release
 - **Secrets stay off the command line.** Database passwords and Tinker code travel over stdin, so `ps` on the server never shows them.
 - **You see it before it runs.** Every change shows its exact command or SQL, with Cancel focused. Production is marked, Tinker asks first, and table editing and restoring dumps have to be switched on.
 - **Read-only servers.** Mark a server *Read-only* (`read_only: true`) and laraport refuses everything that would change it: commands other than known reads (`route:list`, `composer show`…), restarts and deploys, edits of files and tables, SQL other than a single SELECT, Tinker, shells, uploads, restores and tunnels. Logs, tables, inspect and downloads work as usual. It guards laraport's own actions; for a guarantee at the database, connect with a read-only database user.
-- **Local files are private.** `config.yaml`, SQL history, the journal and downloads are written with mode `0600`.
+- **Local files are private.** `config.yaml`, the history (`history.json`), the journal and downloads are written with mode `0600`.
 
 More: [laraport.app/docs/security](https://laraport.app/docs/security/). To report a vulnerability, see [SECURITY.md](SECURITY.md).
 

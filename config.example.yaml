@@ -13,8 +13,8 @@ settings:
   # wrap_logs: true              # start log/output screens with wrapping on
   # hide_stopped: true           # list running containers only
   # stats_interval: 2            # Stats refresh, seconds
-  # no_sql_history: true         # do not save SQL query history
-  # sql_history_size: 200        # queries kept per database
+  # no_sql_history: true         # do not save the history (SQL, Tinker, commands) in history.json
+  # sql_history_size: 200        # entries kept per database or container
 
 commands:
   - name: "Cache"

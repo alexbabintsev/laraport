@@ -8,6 +8,19 @@ All notable changes to laraport are documented here.
 
 ---
 
+## [0.3.3] - 2026-11-09
+
+### Added
+- Artisan, Composer and npm remember the commands you run, per container: they are listed under *recent* above the commands (newest first, filtered as you type) and run again with ↓ and enter, or can be edited first. `ctrl+d` forgets one. They are saved with the SQL and Tinker history and follow its settings.
+
+### Changed
+- The history file is now `~/.config/laraport/history.json` (it keeps SQL, Tinker and commands); an existing `sql_history.json` is moved there on first use. The settings say Save history, History size and Clear history.
+
+### Fixed
+- Artisan, Composer and npm: the first character typed after picking a suggestion with ↓ did not count - with a single added character, enter still ran the picked command without it.
+
+---
+
 ## [0.3.2] - 2026-11-08
 
 ### Added
