@@ -23,7 +23,7 @@ Documentation: **[laraport.app/docs](https://laraport.app/docs/)**
 
 ### Every container, grouped the way you deploy
 
-One list per server, with Dokploy projects, Swarm stacks and Compose projects as groups. Status, health, ports and live CPU and memory at a glance; old tasks from past deploys fold away. Favorites and display names survive redeploys, because they are bound to the service, not to the container name. Above the list, a panel shows the server itself: OS, load against its cores, memory, disks, Docker and Swarm, with warnings for a nearly full disk or a pending reboot (`p` folds it to one line).
+One list per server, with Coolify and Dokploy projects, Swarm stacks and Compose projects as groups; Coolify containers show their resource's name instead of a UUID. Status, health, ports and live CPU and memory at a glance; old tasks from past deploys fold away. Favorites and display names survive redeploys, because they are bound to the service, not to the container name. Above the list, a panel shows the server itself: OS, load against its cores, memory, disks, Docker and Swarm, with warnings for a nearly full disk or a pending reboot (`p` folds it to one line).
 
 ![The container list of a server, grouped by project](docs/media/containers.gif)
 
@@ -82,7 +82,7 @@ Every route from `route:list --json` with its method, URI, name, controller and 
 ### And more
 
 - **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config. `ctrl+t` runs the command in the terminal instead, for commands that ask questions (`make:filament-user`, Laravel Prompts). The commands you run are remembered per container: they are listed under *recent* on top, ready to run again with ↓ and enter or to edit first; `ctrl+d` forgets one.
-- **Schedule and Environment**: the app's scheduled tasks with their next run (`t` runs one now through `schedule:test`, after a confirmation); the environment of Dokploy apps whose `.env` lives in the container's variables.
+- **Schedule and Environment**: the app's scheduled tasks with their next run (`t` runs one now through `schedule:test`, after a confirmation); the environment of Dokploy and Coolify apps whose `.env` lives in the container's variables.
 - **Shell**: an interactive terminal in any container (full PTY), also through a bastion.
 - **Server resources**: images, volumes and networks with sizes and the containers using them, an update check against the registries, prune with the exact command in front of you.
 - **Docker**: inspect, stats, top, diff, restart, start/stop, remove.

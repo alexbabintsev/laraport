@@ -8,6 +8,16 @@ All notable changes to laraport are documented here.
 
 ---
 
+## [0.3.4] - 2026-11-09
+
+### Added
+- Coolify: containers are grouped by Coolify project (with the environment when it is not production, `shop/staging`) and named after their resource (`api`, `shop-db`) instead of their UUID; Coolify's own containers get a `coolify` group. Favorites, display names, Artisan and Tinker history stay with the resource across redeploys, whose container names carry the time of the deploy. The container card shows the Coolify project, environment and resource.
+
+### Changed
+- Coolify containers get no Compose actions (pull, recreate, update): Coolify writes their compose file again on every deploy, in its helper container. Redeploy them in Coolify.
+
+---
+
 ## [0.3.3] - 2026-11-09
 
 ### Added
