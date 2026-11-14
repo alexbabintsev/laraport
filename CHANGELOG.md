@@ -8,6 +8,16 @@ All notable changes to laraport are documented here.
 
 ---
 
+## [0.3.5] - 2026-11-14
+
+### Added
+- Artisan lists a command's arguments and options with their descriptions and defaults once you type the command and a space, like `artisan help`: `--` and the first letters narrow them down, ↓ or `tab` puts one in the input (enter on an option taking a value leaves it there after `=` for the value), and options already given are not offered again. The command list now comes from `artisan list --format=json`, still one call; if that output cannot be read, the plain list is used and only the commands are offered.
+- Composer does the same: a command or its alias (`r`, `i`) and a space list its arguments and options, Composer's own global ones (`--working-dir`, `--no-plugins`...) last. The list comes from `composer list --format=json`, with the plain list as the fallback.
+- README: a clip of Artisan's recent commands (`docs/media/artisan.gif`), narrowed down by typing and run again.
+- README: a clip of a command's options (`docs/media/params.gif`): `queue:work`, its options listed, narrowed down and put in with tab.
+
+---
+
 ## [0.3.4] - 2026-11-09
 
 ### Added

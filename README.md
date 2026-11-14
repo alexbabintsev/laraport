@@ -79,9 +79,21 @@ Every route from `route:list --json` with its method, URI, name, controller and 
 
 ![Filtering the routes by method, URI and middleware](docs/media/routes.gif)
 
+### Artisan commands you ran, ready to run again
+
+Artisan, Composer and npm remember the commands you run, per container: they are listed under *recent* on top, newest first and narrowed down as you type, ready to run again with ↓ and enter or to edit first; `ctrl+d` forgets one.
+
+![Artisan's recent commands, narrowed down by typing and run again](docs/media/artisan.gif)
+
+### A command's options, as you type it
+
+Type an Artisan or Composer command (or its alias, `composer r`) and a space to see its arguments and options with their descriptions and defaults, the way `help` shows them; `--` and the first letters narrow them down, ↓ or `tab` puts one in the input (an option taking a value waits for it after `=`), and options already given are left out.
+
+![queue:work's options listed as the command is typed, narrowed down with --q and put in with tab](docs/media/params.gif)
+
 ### And more
 
-- **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config. `ctrl+t` runs the command in the terminal instead, for commands that ask questions (`make:filament-user`, Laravel Prompts). The commands you run are remembered per container: they are listed under *recent* on top, ready to run again with ↓ and enter or to edit first; `ctrl+d` forgets one.
+- **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config. `ctrl+t` runs the command in the terminal instead, for commands that ask questions (`make:filament-user`, Laravel Prompts).
 - **Schedule and Environment**: the app's scheduled tasks with their next run (`t` runs one now through `schedule:test`, after a confirmation); the environment of Dokploy and Coolify apps whose `.env` lives in the container's variables.
 - **Shell**: an interactive terminal in any container (full PTY), also through a bastion.
 - **Server resources**: images, volumes and networks with sizes and the containers using them, an update check against the registries, prune with the exact command in front of you.
