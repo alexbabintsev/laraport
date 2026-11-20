@@ -91,6 +91,20 @@ Type an Artisan or Composer command (or its alias, `composer r`) and a space to 
 
 ![queue:work's options listed as the command is typed, narrowed down with --q and put in with tab](docs/media/params.gif)
 
+### Your AI agent on the same servers (MCP)
+
+`laraport mcp` lets Claude Code, Cursor, Codex and other MCP clients look at your apps with the connections laraport already has: the containers of every server, the app's overview (environment, debug mode, pending migrations), its logs with errors grouped by kind, the container's output, queues, Horizon and failed jobs, routes, the schedule, read-only Artisan commands, and the app's database and Redis. Ask "why did checkout fail last night on production?" and the agent reads the errors, the trace and the failed jobs itself.
+
+```bash
+claude mcp add laraport -- laraport mcp
+```
+
+Other clients take the same command (`laraport mcp`, optionally with a config path) in their MCP settings. Every tool only reads:
+
+- SQL has to be a single `SELECT` (`WITH`, `VALUES`, `TABLE`), and the database refuses writes anyway: PostgreSQL runs it in a `READ ONLY` transaction that is rolled back and stopped after 30 seconds, MySQL and MariaDB in a `READ ONLY` session, SQLite opens the file read-only.
+- Log tools read only the app's log files (`storage/logs` and the container's `custom_logs`), never `.env` or other files; Artisan runs only known reads, and not `config:show`.
+- Database and Redis passwords are used to connect and never returned. Logs, job payloads and tables can still hold personal data, and what the agent reads goes to its model: hide a server from agents with *Hide from AI agents* in its settings (`hide_from_mcp: true`).
+
 ### And more
 
 - **Artisan, Composer and npm**: every command with its description and autocomplete; your own command groups in the config. `ctrl+t` runs the command in the terminal instead, for commands that ask questions (`make:filament-user`, Laravel Prompts).
@@ -161,6 +175,7 @@ servers:
     jump_host: ops@bastion.example.com   # optional
     docker_cmd: sudo -n docker           # optional
     read_only: true                      # optional: refuse every change
+    hide_from_mcp: true                  # optional: keep it away from AI agents
     containers:
       - service: swarm/shop_web          # survives redeploys
         display_name: web
@@ -190,6 +205,7 @@ Keys are checked on your computer, so nothing is sent anywhere. Versions release
 - **Secrets stay off the command line.** Database passwords and Tinker code travel over stdin, so `ps` on the server never shows them.
 - **You see it before it runs.** Every change shows its exact command or SQL, with Cancel focused. Production is marked, Tinker asks first, and table editing and restoring dumps have to be switched on.
 - **Read-only servers.** Mark a server *Read-only* (`read_only: true`) and laraport refuses everything that would change it: commands other than known reads (`route:list`, `composer show`…), restarts and deploys, edits of files and tables, SQL other than a single SELECT, Tinker, shells, uploads, restores and tunnels. Logs, tables, inspect and downloads work as usual. It guards laraport's own actions; for a guarantee at the database, connect with a read-only database user.
+- **AI agents only read.** `laraport mcp` offers agents tools that read and nothing else (see [above](#your-ai-agent-on-the-same-servers-mcp)), with the same license limits as the UI; servers marked *Hide from AI agents* are not offered at all.
 - **Local files are private.** `config.yaml`, the history (`history.json`), the journal and downloads are written with mode `0600`.
 
 More: [laraport.app/docs/security](https://laraport.app/docs/security/). To report a vulnerability, see [SECURITY.md](SECURITY.md).

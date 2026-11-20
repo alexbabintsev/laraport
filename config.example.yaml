@@ -175,6 +175,8 @@ servers:
     # jump_key: "~/.ssh/bastion"    # key for the bastion (default: the key above, then ssh-agent)
     # docker_cmd: "sudo -n docker"  # if your user is not in the docker group (or "podman")
     # root_path: "/var/www/html"    # default app root for this server's containers
+    # read_only: true               # refuse everything that changes this server
+    # hide_from_mcp: true           # keep this server away from AI agents (laraport mcp)
     containers:
       - name: "myapp-*"               # glob patterns supported
         display_name: "My App"

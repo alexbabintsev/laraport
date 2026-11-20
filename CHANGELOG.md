@@ -8,6 +8,19 @@ All notable changes to laraport are documented here.
 
 ---
 
+## [0.3.6] - 2026-11-20
+
+### Added
+- `laraport mcp`: an MCP server on stdio for Claude Code, Cursor and other AI agents (`claude mcp add laraport -- laraport mcp`). Its tools only read: servers and containers (`list_servers`, `list_containers`, `server_info`), the app's overview with debug mode, maintenance and pending migrations (`app_overview`), logs (`list_log_files`, `read_log` with a search or minimum level that brings stack traces along, `log_errors` grouped by kind, `docker_logs`), queues and Horizon (`queues`, `horizon`, `horizon_job`), `routes`, `schedule`, read-only Artisan commands (`artisan`), the app's database (`db_tables`, `db_describe`, `db_query`) and Redis (`redis_keys`, `redis_get`). A container is named by its name, display name, an ID prefix, its service or a part of its name. The free version's limits apply as in the UI.
+- SQL from agents runs read-only at the database too: PostgreSQL in a `READ ONLY` transaction that is rolled back, with a 30-second statement timeout; MySQL and MariaDB in a `READ ONLY` session; SQLite with the file opened read-only. Only a single `SELECT`, `WITH`, `VALUES` or `TABLE` statement is accepted.
+- Log tools read only the app's log files (`storage/logs` and `custom_logs`); `config:show` is not run for agents, and database and Redis passwords are never returned.
+- *Hide from AI agents* in a server's settings (`hide_from_mcp: true`) keeps `laraport mcp` from offering that server.
+
+### Changed
+- The Go toolchain in `go.mod` is 1.26.11, which fixes GO-2026-6859 in `net/http` (the CI vulnerability check failed on 1.26.10). Release binaries were already built with Go 1.27.4, which has the fix.
+
+---
+
 ## [0.3.5] - 2026-11-14
 
 ### Added
